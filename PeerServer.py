@@ -4,6 +4,10 @@ import logging
 import argparse
 import time
 import json
+import pickle
+
+import message
+
 
 logger = logging.getLogger(__name__)
 
@@ -70,33 +74,39 @@ class PeerServer:
         # 在这里进行与客户端的通信
         while True:
             try:
-                data = client.recv(1024)
-                if not data:
+                mess_recive_b = client.recv(1024)
+                if not mess_recive_b:
                     break
-
-                json_str = data.decode('utf-8')
-                msg_dict = json.loads(json_str)
-                sender_id = msg_dict["sender_id"]
-                msg = msg_dict["message"]
-
-                print(msg_dict)
-
-                if sender_id == 0:
-
-                    # 这块可以改成多线程的发送
+                
+                mess_recive = pickle.loads(mess_recive_b)
+                mess_recive_type = mess_recive.type
+                
+                print(mess_recive.data, mess_recive.data_id, mess_recive.from_host, mess_recive.from_port)
+                if mess_recive.type == 'data_client':
+                    mess_send = message.Message_Data_Sender(mess_recive.data, mess_recive.data_id, self.ip, self.port)
+                    mess_send_b = pickle.dumps(mess_send)
 
                     with self.lock:
-
-                        new_msg_dict = {"sender_id": self.id, 'type': "data", "message": msg}
-
-                        new_json_str = json.dumps(new_msg_dict)
-
                         for id, send_client in self.send_clients.items():
                                 try:
-                                    send_client.send(new_json_str.encode('utf-8'))
+                                    send_client.send(mess_send_b)
                                 except Exception as e:
                                     print(f"Error sending message to {id}: {e}")
 
+                elif mess_recive.type == 'Heartbeat':
+                    pass
+                elif mess_recive.type == 'vote':
+                    pass
+                elif mess_recive.type == 'data_sender':
+                    pass
+                elif mess_recive.type == 'data_sender_response':
+                    pass
+                elif mess_recive.type == 'data_request':
+                    pass
+                elif mess_recive.type == 'data_supplement':
+                    pass
+                elif mess_recive.type == 'data_client':
+                    pass
 
             except Exception as e:
                 print(f"Error handling client {addr[0]}:{addr[1]}: {e}")

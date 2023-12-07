@@ -2,9 +2,12 @@ import socket
 import threading
 import uuid
 import json
- 
+import pickle
+
 HOST = '127.0.0.1'
 PORT = 8888
+
+import message 
 
 
 # 随机生成一个唯一 ID
@@ -23,24 +26,34 @@ def send_message():
         print("server id:")
         id = input()
         print("message:")
-        message = input()
- 
-        # 构造消息字典
-        msg_dict = {
-            'sender_id': 0,
-            'type': "data",
-            'message': message
-        }
- 
-        # 将消息字典序列化为JSON格式字符串
-        json_str = json.dumps(msg_dict)
- 
-        # 将消息发送给服务端
-        
+        message_str = input()
+
+        # consturct message
+        mess = message.Message_Data_Client(message_str, 1, "0.0.0.0", 0)
+
+        mess_b = pickle.dumps(mess)
+
         if id == "1":
-            client_socket.sendall(json_str.encode('utf-8'))
+            client_socket.sendall(mess_b)
         else:
-            client_socket2.sendall(json_str.encode('utf-8'))
+            client_socket2.sendall(mess_b)
+        
+        # # 构造消息字典
+        # msg_dict = {
+        #     'sender_id': 0,
+        #     'type': "data",
+        #     'message': message_str
+        # }
+ 
+        # # 将消息字典序列化为JSON格式字符串
+        # json_str = json.dumps(msg_dict)
+ 
+        # # 将消息发送给服务端
+        
+        # if id == "1":
+        #     client_socket.sendall(json_str.encode('utf-8'))
+        # else:
+        #     client_socket2.sendall(json_str.encode('utf-8'))
     
 
 if __name__ == '__main__':
