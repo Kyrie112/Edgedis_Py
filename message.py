@@ -20,7 +20,8 @@ class Message_Heartbeat_Response:
 
 
 class Message_Vote:
-    def __init__(self, term, max_id, candidate_id, total_block, from_host, from_port):
+    def __init__(self, id, term, max_id, candidate_id, total_block, from_host, from_port):
+        self.id = id
         self.type = 'vote'
         self.term = term
         self.max_id = max_id

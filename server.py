@@ -31,7 +31,7 @@ class Node:
         self.coordinator_id = 0
         self.status = 'follower'  # follower, candidate or coordinator
         self.sub_status = 'receiver'  # receiver or sender
-        self.time_out = None  # time out 
+        self.last_heartbeat = None  # time out 
         self.data_id = -1  # if the node is a sender, it needs to update this, current data id
         self.data_to_send = ""  # if the node is a sender, it needs to update this, current data
         self.server_host_list = ["", "127.0.0.1", "127.0.0.1"]  # the ith value is the ith server's ip
@@ -39,7 +39,8 @@ class Node:
         self.send_clients = dict()
         self.receive_clients = dict()
         self.data_ind = dict()  # store each data block with an id
-        self.max_id = 2  # the num of servers
+        self.max_id = 0  # recive max data id
+        self.num = 2 # the num of servers
         self.term = 0  # need to be update
         self.id = server_id  # server id
         self.vote_for = 0  # the node's id of the node vote for during this term
@@ -55,7 +56,7 @@ class Node:
 
         # create client to connect other server
         client_threads = []
-        for i in range(self.max_id):
+        for i in range(self.num):
             id = i + 1
             if id != self.id:
                 client_thread = threading.Thread(target=self.connect_to_other, args=(self.server_host_list[id], self.server_port_list[id], id), name="client_thread")
@@ -67,6 +68,8 @@ class Node:
             client_thread.join()
 
         logger.info(f"All Server Connected...")
+
+        self.start_vote()
     
     def start_server(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -103,25 +106,52 @@ class Node:
                 time.sleep(1)
 
     def start_vote(self):  # need to be implemented
-        is_time_out = True
-        """
-        how to check if time reach time_out
-        below code is the core code to start broad_cast
-        """
-        # need to broadcast the vote request
-        if is_time_out:
+        while True:
+            if self.status == 'coordinator':
+                continue
+            now_time = self.last_heartbeat = time.time()
+            while True:
+                time.sleep(0.05)
+                now_time = time.time()
+                if now_time - self.last_heartbeat > 0.05:
+                    break
+
+            # need to broadcast the vote request
             self.status = 'candidate'  # become candidate
             self.term += 1  # change the term
             self.vote_for = self.id  # vote for itself
             self.vote_map.clear()
             self.vote_map[self.id] = True
-            mess = message.Message_Vote(self.term, self.max_id, self.id, len(self.data_ind),
+            mess = message.Message_Vote(self.id, self.term, self.max_id, self.id, len(self.data_ind),
                                         self.server_host, self.server_port)
-            for ind in range(len(self.server_host_list)):  # need to broadcast the message
-                s = socket.socket()
-                s.connect((self.server_host_list[ind], self.server_port_list[ind]))
-                s.send(mess)
-                s.close()
+            mess_b = pickle.dumps(mess)
+
+            # broadcast the data
+            with self.lock:            
+                for id, send_client in self.send_clients.items():
+                        # need use mutithread, todo...
+                        try:
+                            while True:
+                                # send
+                                send_client.send(mess_b)
+                                
+                                # recive response 
+                                # This section can be implemented as a function, todo...
+                                try:
+                                    send_client.settimeout(0.25) # timeout parameter, unit: seconds
+                                    mess_send_response_b = send_client.recv(1024)
+                                    send_client.settimeout(None)
+                                    mess_send_response = pickle.loads(mess_send_response_b)
+                                    self.Vote_Response_Handle(mess_send_response)
+                                    break
+                                except socket.timeout:
+                                    print("Response timed out. Retry...")
+                                    # Implement timeout retry logic, todo...
+                        except Exception as e:
+                            print(f"Error sending message to {id}: {e}")
+                            # may be need reconnect
+            
+            time.sleep(0.05)
 
     def handle_message(self, client):  # this function need to be run by a thread so that it can be run forever
             while True:
@@ -203,15 +233,15 @@ class Node:
 
     # these functions are used for handle different types of message and different roles need to handle them differently
     def Heartbeat_Handle(self, mess):  # need to be implemented
-        """
-        here needs to refresh the timeout of this follower, but how to do ?
-        """
+        self.last_heartbeat = time.time()
+
         miss_data_block = []
         from_host = mess.from_host
         from_port = mess.from_port
         pre_max_id = self.max_id
-        s = socket.socket()
-        s.connect((from_host, from_port))
+        id = mess.id
+        s = self.receive_clients[id]
+
         # ask for the missing data
         for ind in range(pre_max_id + 1, self.max_id, 1):
             miss_data_block.append(ind)
@@ -222,20 +252,20 @@ class Node:
         # create a response and send to the coordinator
         mess = message.Message_Heartbeat_Response(miss_data_block, self.max_id,
                                                   self.term, self.server_host, self.server_port)
-        s.send(mess)
-        s.close()
+        mess_b = pickle.dumps(mess)
+        s.send(mess_b)
 
     def Heartbeat_Response_Handle(self, mess):
-        s = socket.socket()
-        s.connect((mess.from_host, mess.from_port))
         # supply the follower with the data it needs
+        s = self.send_clients[mess.id]
         data_block = []
         data_block_id = mess.miss_data_block
         for ind in mess.miss_data_block:
             data_block.append(self.data_ind[ind])
         if len(data_block) != 0:
             mess1 = message.Message_Data_Supplement(data_block, data_block_id)
-            s.send(mess1)
+            mess1_b = pickle.dumps(mess1)
+            s.send(mess1_b)
         # check if there is any new data that followers process
         request_list = []
         if mess.max_id > self.max_id:
@@ -248,32 +278,48 @@ class Node:
         if len(request_list) != 0:
             mess2 = message.Message_Data_Request(self.server_host, self.server_port, request_list)
             s.send(mess2)
-        s.close()
+            
+            try:
+                s.settimeout(0.25) # timeout parameter, unit: seconds
+                mess2_response_b = s.recv(1024)
+                s.settimeout(None)
+                mess2_response = pickle.loads(mess2_response_b)
+                self.Data_Request_Response_Handle(mess2_response)
+            except socket.timeout:
+                print("Response timed out. Retry...")
+
+
+
         if mess.term > self.term:
             self.term = mess.term
             self.status = 'follower'
 
     def Vote_Handle(self, mess):
-        s = socket.socket()
-        s.connect((mess.from_host, mess.from_port))
+        id = mess.id
+        s = self.receive_clients[id]
+
         # check whether it needs to support the candidate
-        if mess.total_block >= len(self.data_ind) and (
+        if mess.tot_block >= len(self.data_ind) and (
                 (mess.term == self.term and self.term == -1) or mess.term > self.term):
             self.term = mess.term  # change the term
-            mess = message.Message_Vote_Response(self.id, True, self.term, self.server_host, self.server_port)
+            mess_vr = message.Message_Vote_Response(self.id, True, self.term, self.server_host, self.server_port)
         else:
-            mess = message.Message_Vote_Response(self.id, True, self.term, self.server_host, self.server_port)
-        s.send(mess)
-        s.close()
+            mess_vr = message.Message_Vote_Response(self.id, True, self.term, self.server_host, self.server_port)
+        
+        mess_vr_b = pickle.dumps(mess_vr)
+        s.send(mess_vr_b)
+
+        
 
     def Vote_Response_Handle(self, mess):
-        n = len(self.server_host_list)  # the count of the servers
+        n = self.num  # the count of the servers
         if mess.support:
             self.vote_map[mess.id] = True
         # accept
-        if len(self.vote_map) > (n + 1) / 2:
+        if len(self.vote_map) > int((n + 1) / 2):
             self.status = 'coordinator'
             self.coordinator_id = self.id
+            print(f"server {self.id} is the coordinator!")
             self.Broadcast_Heartbeat()
         # the node falls behind, it needs to become follower
         if mess.term > self.term:
@@ -282,10 +328,7 @@ class Node:
     # below three functions don't have pseudocode
     def Data_Sender_Handle(self, mess):
         self.data_ind[mess.data_id] = mess.data
-
-        ##################################################################
-        # self.max_id = max(self.id, mess.data_id) ### max(id, data_id)? #
-        ##################################################################
+        self.max_id = max(self.max_id, mess.data_id)
 
         print(mess.id, mess.data, mess.data_id, mess.from_host, mess.from_port)
 
@@ -300,7 +343,7 @@ class Node:
 
     def Data_Sender_Response_Handle(self, mess):
         print(mess.id, mess.data_id, mess.status, mess.from_host, mess.from_port)
-        n = self.max_id
+        n = self.num
         if mess.status:  # received successfully
             self.store_map[mess.id] = True
         if len(self.store_map) > int((n + 1) / 2):  # need to tell the cloud that the data block has been transmitted
@@ -322,6 +365,7 @@ class Node:
         self.data_id = mess.data_id
         self.data_to_send = mess.data
         self.data_ind[mess.data_id] = mess.data
+        self.max_id = max(self.max_id, mess.data_id)
         self.store_map[self.id] = True
 
         print(mess.data, mess.data_id, mess.from_host, mess.from_port)
@@ -334,35 +378,38 @@ class Node:
             for id, send_client in self.send_clients.items():
                     # need use mutithread, todo...
                     try:
-                        # send
-                        send_client.send(mess_send_b)
-                        
-                        # recive response 
-                        # This section can be implemented as a function, todo...
-                        try:
-                            send_client.settimeout(0.25) # timeout parameter, unit: seconds
-                            mess_send_response_b = send_client.recv(1024)
-                            send_client.settimeout(None)
-                            mess_send_response = pickle.loads(mess_send_response_b)
-                            self.Data_Sender_Response_Handle(mess_send_response)
-                        except socket.timeout:
-                            print("Response timed out.")
-                            # Implement timeout retry logic, todo...
+                        while True:
+                            # send
+                            send_client.send(mess_send_b)
+                            
+                            # recive response 
+                            # This section can be implemented as a function, todo...
+                            try:
+                                send_client.settimeout(0.25) # timeout parameter, unit: seconds
+                                mess_send_response_b = send_client.recv(1024)
+                                send_client.settimeout(None)
+                                mess_send_response = pickle.loads(mess_send_response_b)
+                                self.Heartbeat_Response_Handle(mess_send_response)
+                                break
+                            except socket.timeout:
+                                print("Response timed out. Retry...")
+                                # Implement timeout retry logic, todo...
                     except Exception as e:
                         print(f"Error sending message to {id}: {e}")
+                        # may be need reconnect
 
     def Data_Request_Handle(self, mess):
         # collect the missing data of coordinator
-        s = socket.socket()
-        s.connect((mess.from_host, mess.from_port))
+        id = mess.id
+        s = self.receive_clients[id]
         request_list = mess.request_list
         request_data = []
         for ind in request_list:
             request_data.append(self.data_ind[ind])
         mess = message.Message_Data_Request_Response(self.server_host, self.server_port, request_list,
                                                      request_data)
-        s.send(mess)
-        s.close()
+        mess_b = pickle.dumps(mess)
+        s.send(mess_b)
 
     def Data_Request_Response_Handle(self, mess):
         # store the new data blocks that are processed by follower
@@ -377,11 +424,33 @@ class Node:
     def Broadcast_Heartbeat(self):
         # can be used for a coordinator to broadcast its heartbeat
         mess = message.Message_Heartbeat(self.id, self.term, self.max_id, self.server_host, self.server_port)
-        for ind in range(len(self.server_host_list)):  # need to broadcast the message
-            s = socket.socket()
-            s.connect((self.server_host_list[ind], self.server_port_list[ind]))
-            s.send(mess)
-            s.close()
+        mess_b = pickle.dumps(mess)
+
+        # broadcast the heartbeat
+        with self.lock:            
+            for id, send_client in self.send_clients.items():
+                    # need use mutithread, todo...
+                    try:
+                        while True:
+                            # send
+                            send_client.send(mess_b)
+                            
+                            # recive response 
+                            # This section can be implemented as a function, todo...
+                            try:
+                                send_client.settimeout(0.25) # timeout parameter, unit: seconds
+                                mess_send_response_b = send_client.recv(1024)
+                                send_client.settimeout(None)
+                                mess_send_response = pickle.loads(mess_send_response_b)
+                                self.Vote_Response_Handle(mess_send_response)
+                                break
+                            except socket.timeout:
+                                print("Response timed out. Retry...")
+                                # Implement timeout retry logic, todo...
+                    except Exception as e:
+                        print(f"Error sending message to {id}: {e}")
+                        # may be need reconnect
+        
 
 
 if __name__ == "__main__":
@@ -397,7 +466,7 @@ if __name__ == "__main__":
     for ip, port, id in peers:
         server.server_host_list.append(ip)
         server.server_port_list.append(port)
-    server.max_id = len(peers)
+    server.num = len(peers)
     server.sign_in()
 
 
