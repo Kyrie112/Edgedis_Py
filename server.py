@@ -1,36 +1,106 @@
 # this is the code file for node and how they handle different kinds of message
 import socket
 import message
+import threading
+import time
+import logging
+import pickle
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s')
+
+import argparse
+
+def construct_hyper_param(parser):
+    parser.add_argument('-server_id', required=True, default=1, type=int,
+                        help='Id for deploied server')
+
+    args = parser.parse_args()
+
+    return args
 
 class Node:
-    def __init__(self, server_host, server_port, client_host, client_port, time_out):
-        self.server_host = server_host
-        self.server_port = server_port
-        self.client_host = client_host
-        self.client_port = client_port
+    def __init__(self, server_host, server_port, server_id):
+        self.server_host = server_host  # local ip
+        self.server_port = server_port  # local port
+        # self.client_host = client_host  # cloud ip
+        # self.client_port = client_port  # cloud port
         self.coordinator_host = server_host  # these three parament need to be updated during the sign_in process and
         # change when a new coordinator is elected
         self.coordinator_port = server_port
         self.coordinator_id = 0
         self.status = 'follower'  # follower, candidate or coordinator
         self.sub_status = 'receiver'  # receiver or sender
-        self.time_out = time_out
-        self.data_id = -1  # if the node is a sender, it needs to update this
-        self.data_to_send = ""  # if the node is a sender, it needs to update this
-        self.server_host_list = []
-        self.server_port_list = []  # these two lists need to be updated during the sign_in process
+        self.time_out = None  # time out 
+        self.data_id = -1  # if the node is a sender, it needs to update this, current data id
+        self.data_to_send = ""  # if the node is a sender, it needs to update this, current data
+        self.server_host_list = ["", "127.0.0.1", "127.0.0.1"]  # the ith value is the ith server's ip
+        self.server_port_list = [0, 8888, 8889]  # all server information
+        self.send_clients = dict()
+        self.receive_clients = dict()
         self.data_ind = dict()  # store each data block with an id
-        self.max_id = 0  # need to be updated during the sign_in process
-        self.term = 0  # need to be updated during the sign_in process
-        self.id = 0  # need client to give it an id
+        self.max_id = 2  # the num of servers
+        self.term = 0  # need to be update
+        self.id = server_id  # server id
         self.vote_for = 0  # the node's id of the node vote for during this term
         self.vote_map = dict()  # store the vote condition
         self.store_map = dict()  # store the store condition(only sender can use it, it needs to be refreshed when senders need to send out a new data block)
+        self.lock = threading.Lock()
 
-    def sign_in(self, client_host, client_port):  # need to be implemented
-        # how to join a new server?
-        return
+    
+    def sign_in(self):  # need to be implemented
+        # start server listen
+        server_thread = threading.Thread(target=self.start_server, name="server_thread")
+        server_thread.start()
+
+        # create client to connect other server
+        client_threads = []
+        for i in range(self.max_id):
+            id = i + 1
+            if id != self.id:
+                client_thread = threading.Thread(target=self.connect_to_other, args=(self.server_host_list[id], self.server_port_list[id], id), name="client_thread")
+                client_threads.append(client_thread)
+                client_thread.start()
+
+        # wait all server create connect
+        for client_thread in client_threads:
+            client_thread.join()
+
+        logger.info(f"All Server Connected...")
+    
+    def start_server(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind((self.server_host, self.server_port))
+        server.listen(5)
+        print(f"Server listening on {self.server_host}:{self.server_port}...")
+
+        while True:
+            client, addr = server.accept()
+
+            client_handler = threading.Thread(target=self.handle_message, args=(client, ), name="handle_message")
+            client_handler.start()
+    
+    def connect_to_other(self, ip, port, id):
+        while True:
+            try:
+                client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                client_socket.connect((ip, port))
+
+                mess_sign_in = message.Message_Sign_In(self.server_host, self.server_port, self.id)
+                mess_sign_in_b = pickle.dumps(mess_sign_in)
+
+                client_socket.send(mess_sign_in_b)
+
+                print(f"Connected to server {ip}:{port}")
+
+                # append in send client list
+                with self.lock:
+                    self.send_clients[id] = client_socket
+
+                break
+            except Exception as e:
+                print(f"Error connecting to server {ip}:{port}: {e}")
+                time.sleep(1)
 
     def start_vote(self):  # need to be implemented
         is_time_out = True
@@ -53,24 +123,30 @@ class Node:
                 s.send(mess)
                 s.close()
 
-    def handle_message(self):  # this function need to be run by a thread so that it can be run forever
-        s = socket.socket()
-        s.bind((self.server_host, self.server_port))
-        s.listen(6)
-        while True:
-            conn, addr = s.accept()
+    def handle_message(self, client):  # this function need to be run by a thread so that it can be run forever
             while True:
-                data = conn.recv(2048)  # how to receive struct?
-                if data:  # handle different types of message according to role of the node
-                    if self.status == 'follower':
-                        self.follower_handle(data)
-                    elif self.status == 'candidate':
-                        self.candidate_handle(data)
-                    elif self.status == 'coordinator':
-                        self.coordinator_handle(data)
-                else:
-                    break
+                try:
+                    data = client.recv(1024)
+                    if not data:
+                        break
 
+                    mess = pickle.loads(data)
+                    if mess.type == 'sign_in':
+                        self.receive_clients[mess.server_id] = client
+                    elif mess.type == 'data_client':
+                        self.receive_clients[0] = client
+                    
+                    if self.status == 'follower':
+                        self.follower_handle(mess)
+                    elif self.status == 'candidate':
+                        self.candidate_handle(mess)
+                    elif self.status == 'coordinator':
+                        self.coordinator_handle(mess)
+
+                except Exception as e:
+                    print(f"Error handling client :{e}")
+                    break
+    
     # these three functions is used for different roles
     def follower_handle(self, mess):
         if mess.type == 'data_client':
@@ -88,9 +164,7 @@ class Node:
             self.Data_Request_Handle(mess)
         elif mess.type == 'data_supplement':
             self.Data_Supplement_Handle(mess)
-        elif mess.type == 'data_client':
-            if self.sub_status == 'sender':
-                self.Data_Client_Handle(mess)
+
         return
 
     def candidate_handle(self, mess):
@@ -208,43 +282,74 @@ class Node:
     # below three functions don't have pseudocode
     def Data_Sender_Handle(self, mess):
         self.data_ind[mess.data_id] = mess.data
-        self.max_id = max(self.id, mess.data_id)
-        s = socket.socket()
-        s.connect((mess.from_host, mess.from_port))
-        mess = message.Message_Data_Sender_Response(self.id, True, self.server_host, self.server_port)
-        s.send(mess)
-        s.close()
+
+        ##################################################################
+        # self.max_id = max(self.id, mess.data_id) ### max(id, data_id)? #
+        ##################################################################
+
+        print(mess.id, mess.data, mess.data_id, mess.from_host, mess.from_port)
+
+        mess_response = message.Message_Data_Sender_Response(self.id, mess.data_id, "True", self.server_host, self.server_port)
+        mess_response_b = pickle.dumps(mess_response)
+
+        with self.lock:
+            try:
+                self.receive_clients[mess.id].send(mess_response_b)
+            except Exception as e:
+                print(f"Error response message to {mess.id}: {e}")
 
     def Data_Sender_Response_Handle(self, mess):
-        n = len(self.server_host_list)
+        print(mess.id, mess.data_id, mess.status, mess.from_host, mess.from_port)
+        n = self.max_id
         if mess.status:  # received successfully
             self.store_map[mess.id] = True
-        if len(self.store_map) > (n + 1) / 2:  # need to tell the cloud that the data block has been transmitted
+        if len(self.store_map) > int((n + 1) / 2):  # need to tell the cloud that the data block has been transmitted
             # successfully
             self.store_map.clear()
             self.sub_status = 'receiver'  # need to step back to receiver
-            s = socket.socket()
-            s.connect((self.client_host, self.client_port))
-            # the cloud needs to handle this message and transmit new data block
-            mess = message.Message_Data_Client_Response(self.id, self.data_id, True, self.server_host, self.server_port)
-            s.send(mess)
-            s.close()
+
+            mess_response = message.Message_Data_Client_Response(self.id, mess.data_id, True, self.server_host, self.server_port)
+            mess_response_b = pickle.dumps(mess_response)
+
+            try:
+                self.receive_clients[0].send(mess_response_b)
+            except Exception as e:
+                print(f"Error response message to cloud: {e}")
 
     def Data_Client_Handle(self, mess):
-        # the server don't need to handle the response of this message as the client will handle its response
         # init some parament and store the data
-        self.status = 'sender'
+        self.sub_status = 'sender'
         self.data_id = mess.data_id
         self.data_to_send = mess.data
         self.data_ind[mess.data_id] = mess.data
         self.store_map[self.id] = True
+
+        print(mess.data, mess.data_id, mess.from_host, mess.from_port)
+
+        mess_send = message.Message_Data_Sender(self.id, mess.data, mess.data_id, self.server_host, self.server_port)
+        mess_send_b = pickle.dumps(mess_send)
+
         # broadcast the data
-        mess = message.Message_Data_Sender(self.data_to_send, self.data_id, self.server_host, self.server_port)
-        for ind in range(len(self.server_host_list)):
-            s = socket.socket()
-            s.connect((self.server_host_list[ind], self.server_port_list[ind]))
-            s.send(mess)
-            s.close()
+        with self.lock:            
+            for id, send_client in self.send_clients.items():
+                    # need use mutithread, todo...
+                    try:
+                        # send
+                        send_client.send(mess_send_b)
+                        
+                        # recive response 
+                        # This section can be implemented as a function, todo...
+                        try:
+                            send_client.settimeout(0.25) # timeout parameter, unit: seconds
+                            mess_send_response_b = send_client.recv(1024)
+                            send_client.settimeout(None)
+                            mess_send_response = pickle.loads(mess_send_response_b)
+                            self.Data_Sender_Response_Handle(mess_send_response)
+                        except socket.timeout:
+                            print("Response timed out.")
+                            # Implement timeout retry logic, todo...
+                    except Exception as e:
+                        print(f"Error sending message to {id}: {e}")
 
     def Data_Request_Handle(self, mess):
         # collect the missing data of coordinator
@@ -277,3 +382,23 @@ class Node:
             s.connect((self.server_host_list[ind], self.server_port_list[ind]))
             s.send(mess)
             s.close()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    args = construct_hyper_param(parser)
+
+    peers = [("127.0.0.1", 8888, 1),
+         ("127.0.0.1", 8889, 2)]
+    
+    local_ip, local_port, local_id = peers[args.server_id - 1]
+
+    server = Node(local_ip, local_port, local_id)
+    for ip, port, id in peers:
+        server.server_host_list.append(ip)
+        server.server_port_list.append(port)
+    server.max_id = len(peers)
+    server.sign_in()
+
+
+

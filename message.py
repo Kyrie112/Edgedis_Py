@@ -41,8 +41,9 @@ class Message_Vote_Response:
 
 
 class Message_Data_Sender:  # how to use this class to help sender to send out data
-    def __init__(self, data, data_id, from_host, from_port):
+    def __init__(self, id, data, data_id, from_host, from_port):
         self.type = 'data_sender'
+        self.id = id
         self.data = data
         self.data_id = data_id
         self.from_host = from_host
@@ -50,9 +51,10 @@ class Message_Data_Sender:  # how to use this class to help sender to send out d
 
 
 class Message_Data_Sender_Response:
-    def __init__(self, id, status, from_host, from_port):
+    def __init__(self, id, data_id, status, from_host, from_port):
         self.type = 'data_sender_response'
         self.id = id
+        self.data_id = data_id
         self.status = status
         self.from_host = from_host
         self.from_port = from_port
@@ -77,18 +79,19 @@ class Message_Data_Client_Response:
         self.from_port = from_port
 
 
-class Message_Sign_In:  # this message is used for a new server to join
-    def __init__(self, server_host, server_port):
+class Message_Sign_In:  # this message is used for server connect
+    def __init__(self, server_host, server_port, server_id):
         self.type = 'sign_in'
         self.server_host = server_host
         self.server_port = server_port
+        self.server_id = server_id
 
 
-class Message_Sign_In_Response:  # this message is used to response new server(maybe more than these two paraments)
-    def __init__(self, server_host_list, server_port_list):
-        self.type = 'sign_in_response'
-        self.server_host_list = server_host_list
-        self.server_port_list = server_port_list
+# class Message_Sign_In_Response:  # this message is used to response server connect
+#     def __init__(self, server_host_list, server_port_list):
+#         self.type = 'sign_in_response'
+#         self.server_host_list = server_host_list
+#         self.server_port_list = server_port_list
 
 
 class Message_Data_Request:  # used for coordinator to request data

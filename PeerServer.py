@@ -19,7 +19,7 @@ peers = [("127.0.0.1", 8888, 1),
         #  ("127.0.0.1", 8890, 3)]
 
 def construct_hyper_param(parser):
-    parser.add_argument('-server_id', required=False, default=1, type=int,
+    parser.add_argument('-server_id', required=True, default=1, type=int,
                         help='Id for deploied server')
 
     args = parser.parse_args()
@@ -56,6 +56,7 @@ class PeerServer:
         logger.info(f"All Server Connected...")
 
 
+
     def start_server(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.bind((self.ip, self.port))
@@ -69,6 +70,7 @@ class PeerServer:
 
             client_handler = threading.Thread(target=self.handle_client, args=(client, addr), name="handle_client")
             client_handler.start()
+            
 
     def handle_client(self, client, addr):
         # 在这里进行与客户端的通信
@@ -79,17 +81,31 @@ class PeerServer:
                     break
                 
                 mess_recive = pickle.loads(mess_recive_b)
-                mess_recive_type = mess_recive.type
-                
-                print(mess_recive.data, mess_recive.data_id, mess_recive.from_host, mess_recive.from_port)
+            
+
                 if mess_recive.type == 'data_client':
-                    mess_send = message.Message_Data_Sender(mess_recive.data, mess_recive.data_id, self.ip, self.port)
+                    self.receive_clients[0] = client
+
+                    print(mess_recive.data, mess_recive.data_id, mess_recive.from_host, mess_recive.from_port)
+
+                    mess_response = message.Message_Data_Client_Response(self.id, mess_recive.data_id, "True", self.ip, self.port)
+                    mess_response_b = pickle.dumps(mess_response)
+                    mess_send = message.Message_Data_Sender(mess_recive.data, mess_recive.data_id, self.ip, self.port, self.id)
                     mess_send_b = pickle.dumps(mess_send)
 
                     with self.lock:
+                        try:
+                            self.receive_clients[0].send(mess_response_b)
+                        except Exception as e:
+                            print(f"Error response message to cloud: {e}")
+                        
                         for id, send_client in self.send_clients.items():
                                 try:
-                                    send_client.send(mess_send_b)
+                                    send_client.send(mess_send_b) # may use thread...
+                                    mess_send_response_b = send_client.recv(1024)
+                                    mess_send_response = pickle.loads(mess_send_response_b)
+                                    print(mess_send_response.data_id, mess_send_response.from_host, mess_send_response.from_port, mess_send_response.from_id)
+
                                 except Exception as e:
                                     print(f"Error sending message to {id}: {e}")
 
@@ -98,16 +114,23 @@ class PeerServer:
                 elif mess_recive.type == 'vote':
                     pass
                 elif mess_recive.type == 'data_sender':
-                    pass
-                elif mess_recive.type == 'data_sender_response':
-                    pass
+                    print(mess_recive.data, mess_recive.data_id, mess_recive.from_host, mess_recive.from_port, mess_recive.from_id)
+
+                    mess_response = message.Message_Data_Sender_Response(mess_recive.data_id, "True", self.ip, self.port, self.id)
+                    mess_response_b = pickle.dumps(mess_response)
+
+                    with self.lock:
+                        try:
+                            self.receive_clients[mess_recive.from_id].send(mess_response_b)
+                        except Exception as e:
+                            print(f"Error response message to cloud: {e}")
                 elif mess_recive.type == 'data_request':
                     pass
                 elif mess_recive.type == 'data_supplement':
                     pass
-                elif mess_recive.type == 'data_client':
-                    pass
-
+                elif mess_recive.type == 'sign_in':
+                    self.receive_clients[mess_recive.server_id] = client
+                
             except Exception as e:
                 print(f"Error handling client {addr[0]}:{addr[1]}: {e}")
                 break
@@ -119,6 +142,12 @@ class PeerServer:
             try:
                 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 client_socket.connect((peer_ip, peer_port))
+                
+                mess_sign_in = message.Message_Sign_In(self.ip, self.port, self.id)
+                mess_sign_in_b = pickle.dumps(mess_sign_in)
+
+                client_socket.send(mess_sign_in_b)
+
                 print(f"Connected to peer {peer_ip}:{peer_port}")
 
                 # 将新连接加入到 peers 和 clients 列表中

@@ -21,6 +21,11 @@ client_socket2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 client_socket2.connect((HOST, 8889))
 
+def receive_response(client):
+    pass
+
+
+
 def send_message():
     while True:
         print("server id:")
@@ -35,6 +40,26 @@ def send_message():
 
         if id == "1":
             client_socket.sendall(mess_b)
+
+            # response
+            try:
+                # 在代码区域内设置超时时间
+                client_socket.settimeout(0.25)
+
+                # 执行接收操作
+                mess_response_b = client_socket.recv(1024)
+                mess_response = pickle.loads(mess_response_b)
+
+                print("Received Response:", mess_response.type, mess_response.id, mess_response.data_id, mess_response.status, mess_response)
+
+
+            except socket.timeout:
+                print("Response timed out.")
+
+            finally:
+                # 恢复之前的超时时间或取消超时限制
+                client_socket.settimeout(None)
+
         else:
             client_socket2.sendall(mess_b)
         
