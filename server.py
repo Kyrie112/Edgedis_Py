@@ -1,10 +1,13 @@
 # this is the code file for node and how they handle different kinds of message
 import socket
 import message
+import util
 import threading
 import time
 import logging
 import pickle
+import random
+
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s')
@@ -16,6 +19,8 @@ def construct_hyper_param(parser):
                         help='Id for deploied server')
 
     args = parser.parse_args()
+
+    random_seed = 1234
 
     return args
 
@@ -104,14 +109,20 @@ class Node:
             except Exception as e:
                 print(f"Error connecting to server {ip}:{port}: {e}")
                 time.sleep(1)
-
+    
     def start_vote(self):  # need to be implemented
         while True:
+            logger.info(f"c: {self.coordinator_id}, s: {self.status}")
             if self.status == 'coordinator':
+                time.sleep(0.05)
+                self.Broadcast_Heartbeat()
                 continue
             now_time = self.last_heartbeat = time.time()
             while True:
-                time.sleep(0.05)
+                logger.info(f"c: {self.coordinator_id}, s: {self.status}")
+                random_time = random.uniform(0, 0.25)
+                print(random_time)
+                time.sleep(random_time)
                 now_time = time.time()
                 if now_time - self.last_heartbeat > 0.05:
                     break
@@ -151,7 +162,6 @@ class Node:
                             print(f"Error sending message to {id}: {e}")
                             # may be need reconnect
             
-            time.sleep(0.05)
 
     def handle_message(self, client):  # this function need to be run by a thread so that it can be run forever
             while True:
@@ -300,8 +310,10 @@ class Node:
 
         # check whether it needs to support the candidate
         if mess.tot_block >= len(self.data_ind) and (
-                (mess.term == self.term and self.term == -1) or mess.term > self.term):
+                (mess.term == self.term and self.vote_for == 0) or mess.term > self.term):
+            # print_mess(mess)
             self.term = mess.term  # change the term
+            self.vote_for = mess.id
             mess_vr = message.Message_Vote_Response(self.id, True, self.term, self.server_host, self.server_port)
         else:
             mess_vr = message.Message_Vote_Response(self.id, True, self.term, self.server_host, self.server_port)
@@ -319,6 +331,7 @@ class Node:
         if len(self.vote_map) > int((n + 1) / 2):
             self.status = 'coordinator'
             self.coordinator_id = self.id
+            print("vote map: ", self.vote_map)
             print(f"server {self.id} is the coordinator!")
             self.Broadcast_Heartbeat()
         # the node falls behind, it needs to become follower
