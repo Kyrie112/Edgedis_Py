@@ -10,8 +10,9 @@ class Message_Heartbeat:
 
 
 class Message_Heartbeat_Response:
-    def __init__(self, miss_data_block, max_id, term, from_host, from_port):
+    def __init__(self, id, miss_data_block, max_id, term, from_host, from_port):
         self.type = 'heartbeat_response'
+        self.id = id
         self.miss_data_block = miss_data_block
         self.max_id = max_id
         self.term = term
