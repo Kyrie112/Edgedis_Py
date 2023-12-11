@@ -144,9 +144,9 @@ if __name__ == "__main__":  # can this code be arranged in server?
     # no need?
     Edge_Cloud = Client(cloud_host, cloud_port)  # create an edge server cloud
     # server 1 is entry server, for example.
-    Edge_Cloud.server_count = 2
-    Edge_Cloud.server_host = ["127.0.0.1", "127.0.0.1"]
-    Edge_Cloud.server_port = [8888, 8889]
+    Edge_Cloud.server_count = 4
+    Edge_Cloud.server_host = ["127.0.0.1", "127.0.0.1", "127.0.0.1", "127.0.0.1"]
+    Edge_Cloud.server_port = [8888, 8889, 8881, 8882]
     Edge_Cloud.start()
     trr = threading.Thread(target=Edge_Cloud.send_data())    # a thread which can be run forever
     trr.setDaemon(True)

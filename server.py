@@ -39,8 +39,8 @@ class Node:
         self.last_heartbeat = None  # time out 
         self.data_id = -1  # if the node is a sender, it needs to update this, current data id
         self.data_to_send = ""  # if the node is a sender, it needs to update this, current data
-        self.server_host_list = ["", "127.0.0.1", "127.0.0.1"]  # the ith value is the ith server's ip
-        self.server_port_list = [0, 8888, 8889]  # all server information
+        self.server_host_list = ["", "127.0.0.1", "127.0.0.1", "127.0.0.1", "127.0.0.1"]  # the ith value is the ith server's ip
+        self.server_port_list = [0, 8888, 8889, 8881, 8882]  # all server information
         self.send_clients = dict()
         self.receive_clients = dict()
         self.data_ind = dict()  # store each data block with an id
@@ -473,7 +473,9 @@ if __name__ == "__main__":
     args = construct_hyper_param(parser)
 
     peers = [("127.0.0.1", 8888, 1),
-         ("127.0.0.1", 8889, 2)]
+         ("127.0.0.1", 8889, 2),
+         ("127.0.0.1", 8881, 3),
+         ("127.0.0.1", 8882, 4)]
     
     local_ip, local_port, local_id = peers[args.server_id - 1]
 
