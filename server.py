@@ -75,7 +75,7 @@ class Node:
 
         logger.info(f"All Server Connected...")
 
-        # self.start_vote()
+        self.start_vote()
     
     def start_server(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -483,6 +483,3 @@ if __name__ == "__main__":
         server.server_port_list.append(port)
     server.num = len(peers)
     server.sign_in()
-
-
-
