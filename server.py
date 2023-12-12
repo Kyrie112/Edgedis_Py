@@ -75,7 +75,7 @@ class Node:
 
         logger.info(f"All Server Connected...")
 
-        self.start_vote()
+        # self.start_vote()
     
     def start_server(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

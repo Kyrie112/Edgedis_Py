@@ -7,15 +7,15 @@ import json
 import pickle
 
 import message
-
+import util
 
 logger = logging.getLogger(__name__)
 
 # 配置全局日志
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s')
 
-peers = [("127.0.0.1", 8888, 1),
-         ("127.0.0.1", 8889, 2)]
+peers = [("127.0.0.1", 8888, 1)]
+        #  ("127.0.0.1", 8889, 2)]
         #  ("127.0.0.1", 8890, 3)]
 
 def construct_hyper_param(parser):
@@ -76,17 +76,18 @@ class PeerServer:
         # 在这里进行与客户端的通信
         while True:
             try:
-                mess_recive_b = client.recv(1024)
-                if not mess_recive_b:
-                    break
+                # mess_recive_b = client.recv(16*1024*1024)
+                # if not mess_recive_b:
+                #     break
                 
-                mess_recive = pickle.loads(mess_recive_b)
+                # mess_recive = pickle.loads(mess_recive_b)
             
-
+                mess_recive = util.recive_mess(client)
+                
                 if mess_recive.type == 'data_client':
                     self.receive_clients[0] = client
 
-                    print(mess_recive.data, mess_recive.data_id, mess_recive.from_host, mess_recive.from_port)
+                    print(len(mess_recive.data), mess_recive.data_id, mess_recive.from_host, mess_recive.from_port)
 
                     mess_response = message.Message_Data_Client_Response(self.id, mess_recive.data_id, "True", self.ip, self.port)
                     mess_response_b = pickle.dumps(mess_response)

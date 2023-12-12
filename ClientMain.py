@@ -8,7 +8,7 @@ HOST = '127.0.0.1'
 PORT = 8888
 
 import message 
-
+import util
 
 # 随机生成一个唯一 ID
 UID = str(uuid.uuid4())
@@ -17,9 +17,9 @@ client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 # 连接指定主机和端口
 client_socket.connect((HOST, PORT))
 
-client_socket2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+# client_socket2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-client_socket2.connect((HOST, 8889))
+# client_socket2.connect((HOST, 8889))
 
 def receive_response(client):
     pass
@@ -31,7 +31,7 @@ def send_message():
         print("server id:")
         id = input()
         print("message:")
-        message_str = input()
+        message_str = "K"*int(input())
 
         # consturct message
         mess = message.Message_Data_Client(message_str, 1, "0.0.0.0", 0)
@@ -39,8 +39,8 @@ def send_message():
         mess_b = pickle.dumps(mess)
 
         if id == "1":
-            client_socket.sendall(mess_b)
-
+            # client_socket.sendall(mess_b)
+            util.send_mess(client_socket, mess)
             # response
             try:
                 # 在代码区域内设置超时时间
@@ -61,7 +61,8 @@ def send_message():
                 client_socket.settimeout(None)
 
         else:
-            client_socket2.sendall(mess_b)
+            pass
+            # client_socket2.sendall(mess_b)
         
         # # 构造消息字典
         # msg_dict = {
