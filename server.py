@@ -320,13 +320,13 @@ class Node:
         self.data_ind[mess.data_id] = mess.data
         self.max_id = max(self.max_id, mess.data_id)
 
-        logger.debug(f"Received data block from {mess.id}, data id is {mess.data_id} data length is {len(mess.data)}. FROM [ip: {mess.from_host}, port: {mess.from_port}]")
+        logger.debug(f"Received data block from {mess.id}... [data_id: {mess.data_id}, data_len: {len(mess.data)}, ip: {mess.from_host}, port: {mess.from_port}]")
 
         mess_response = message.Message_Data_Sender_Response(self.id, mess.data_id, "True", self.server_host, self.server_port)
         self.Send(mess.id, self.receive_clients[mess.id], mess_response)
 
     def Data_Sender_Response_Handle(self, mess):
-        logger.debug(f"Received response from {mess.id}, data id is {mess.data_id}. FROM [ip: {mess.from_host}, port: {mess.from_port}]")
+        logger.debug(f"Received response from {mess.id}... [data_id: {mess.data_id}, ip: {mess.from_host}, port: {mess.from_port}]")
         n = self.num
         if mess.status:  # received successfully
             self.store_map[mess.id] = True
@@ -339,7 +339,7 @@ class Node:
             self.Send(0, self.receive_clients[0], mess_response)
 
     def Data_Client_Handle(self, mess):
-        logger.debug(f"Received data block from cloud, data id is {mess.data_id} data length is {len(mess.data)}. FROM: [ip: {mess.from_host}, port: {mess.from_port}]")
+        logger.debug(f"Received data block from cloud... [data_id: {mess.data_id}, data_len: {len(mess.data)}, ip: {mess.from_host}, port: {mess.from_port}]")
 
         # init some parament and store the data
         self.sub_status = 'sender'
@@ -449,14 +449,12 @@ if __name__ == "__main__":
     args = construct_hyper_param(parser)
 
     config = util.load_config("./config.json")
-
-    peers = config["peers"]
     
-    local_ip, local_port, local_id = peers[args.server_id - 1]
+    local_ip, local_port, local_id = config["server_host_private"][args.server_id - 1], config["server_port"][args.server_id - 1], args.server_id
 
     server = Node(local_ip, local_port, local_id)
-    for ip, port, id in peers:
-        server.server_host_list.append(ip)
-        server.server_port_list.append(port)
-    server.num = len(peers)
+    server.server_host_list = server.server_host_list + config["server_host_public"]
+    server.server_port_list = server.server_port_list + config["server_port"]
+    server.num = len(config["server_host_public"])
+
     server.sign_in()

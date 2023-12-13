@@ -9,11 +9,14 @@ import math
 import pickle
 import re
 import util
+import logging
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s')
 
 class Thread_send_block(threading.Thread):
-    def __init__(self, data_block, send_client, id, lock):
-        super(Thread_send_block, self).__init__()
+    def __init__(self, data_block, send_client, id, lock, name):
+        super(Thread_send_block, self).__init__(name=name)
         self.data_block = data_block
         self.send_client = send_client
         self.id = id
@@ -35,7 +38,7 @@ class Thread_send_block(threading.Thread):
                 pass
 
         end_time = time.time()
-        print(f"elapsed time: {end_time - start_time}")
+        logger.info(f"elapsed time: {end_time - start_time}")
             
 
 
@@ -64,13 +67,12 @@ class Thread_send_data(threading.Thread):
 
         tsbs = []
         locks = []
-        print("data get...")
         for ind in range(n):  # start sending the data blocks
             cnt = 0
             lock = threading.Lock()
             while ind_block < len(data_blocks):
                 # print(ind, ind_block, data_blocks)
-                tsb = Thread_send_block(data_blocks[ind_block], self.send_clients[ind], self.block_id + ind_block, lock)
+                tsb = Thread_send_block(data_blocks[ind_block], self.send_clients[ind], self.block_id + ind_block, lock, f"send_data_{ind_block}_to_{ind+1}")
                 cnt += 1
                 ind_block += 1
                 tsb.start()
@@ -109,7 +111,7 @@ class Client:
         for client_thread in client_threads:
             client_thread.join()
 
-        print(f"All Server Connected...")
+        logger.info(f"All Server Connected...")
     
     def connect_to_server(self, ip, port, id):
         while True:
@@ -141,7 +143,7 @@ class Client:
             tsd.start()
             tsd.join()  # need to wait until each server has received the data
             self.block_send_out += block_cnt
-            print('the data has been sent to entry servers(senders)')
+            logger.info('the data has been sent to entry servers(senders)')
 
     def receive_response(self):  # this function is used to receiver response
         while True:
@@ -168,14 +170,16 @@ class Client:
 
 
 if __name__ == "__main__":  # can this code be arranged in server?
-    cloud_host = "127.0.0.1"
-    cloud_port = 8051
+    config = util.load_config("./config.json")
+
+    cloud_host = config["cloud_host"]
+    cloud_port = config["cloud_port"]
     # no need?
     Edge_Cloud = Client(cloud_host, cloud_port)  # create an edge server cloud
     # server 1 is entry server, for example.
     Edge_Cloud.server_count = 2
-    Edge_Cloud.server_host = ["127.0.0.1", "127.0.0.1"]
-    Edge_Cloud.server_port = [8888, 8889]
+    Edge_Cloud.server_host = config["server_host_public"]
+    Edge_Cloud.server_port = config["server_port"]
     Edge_Cloud.start()
     trr = threading.Thread(target=Edge_Cloud.send_data())    # a thread which can be run forever
     trr.setDaemon(True)
