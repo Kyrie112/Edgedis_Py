@@ -7,6 +7,7 @@ import message
 import time
 import pickle
 import re
+import util
 
 
 class Thread_send_block(threading.Thread):
@@ -18,8 +19,9 @@ class Thread_send_block(threading.Thread):
 
     def run(self):
         mess = message.Message_Data_Client(self.data_block, self.id, "0.0.0.0", 0)    # how to send out a data whose type is a struct
-        mess_b = pickle.dumps(mess)
-        self.send_client.sendall(mess_b)
+        util.send_mess(self.send_client, mess)
+
+
 
 
 class Thread_send_data(threading.Thread):
@@ -35,16 +37,16 @@ class Thread_send_data(threading.Thread):
     def run(self):
         n = len(self.send_clients)
         chars = string.ascii_lowercase + string.digits + string.ascii_uppercase
-        random_data = ''.join(random.sample(chars, self.data_len))  # create a random string as datas
+        random_data = ''.join(random.choices(chars, k=self.data_len))  # create a random string as datas
         block_size = int(self.data_len / self.block_cnt)
         data_blocks = [random_data[i:i+block_size] for i in range(self.data_len - block_size + 1)]
         each_cnt = int(self.block_cnt / n)
         ind_block = 0
-        print(data_blocks, self.block_id)
+        # print(data_blocks, self.block_id)
         for ind in range(n):  # start sending the data blocks
             cnt = 0
             while ind_block < len(data_blocks):
-                print(ind, ind_block, data_blocks)
+                # print(ind, ind_block, data_blocks)
                 tsb = Thread_send_block(data_blocks[ind_block], self.send_clients[ind], self.block_id + ind_block)
                 cnt += 1
                 ind_block += 1
@@ -114,7 +116,7 @@ class Client:
             self.block_send_out += block_cnt
             print('the data has been sent to entry servers(senders)')
 
-    def receive_response(self):  # this function needs to be run forever to listen to the response from each senders
+    def receive_response(self):  # this function is used to receiver response
         while True:
             conn, addr = self.c.accept()
             data = conn.recv(2048)

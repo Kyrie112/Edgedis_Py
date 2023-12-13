@@ -1,6 +1,13 @@
 import pickle
 import struct
 import socket
+import time
+import json
+
+def load_config(file_path):
+    with open(file_path, 'r') as file:
+        config = json.load(file)
+    return config
 
 def print_mess(mess):
     attribute_dict = vars(mess)
@@ -19,15 +26,24 @@ def send_mess(client, mess):
     client.sendall(mess_b)
 
 
-def recive_mess(client):
+def recive_mess(client, timeout=None):
+    start_time = time.time()
+
     len_pre = b""
     while len(len_pre) < 4:
-        chunk = client.recv(4 - len(len_pre))
-        if not chunk:
-            # error
-            break
-        len_pre += chunk
-    
+        try:
+            if timeout:
+                remaining_timeout = timeout - (time.time() - start_time)
+                client.settimeout(remaining_timeout)
+            chunk = client.recv(4 - len(len_pre))
+            if not chunk:
+                # error
+                break
+            len_pre += chunk
+        except socket.timeout:
+            print("Timeout while receiving message length")
+            return None
+        
     if len(len_pre) < 4:
         return None
     
@@ -35,19 +51,28 @@ def recive_mess(client):
 
     mess_recive_b = b""
     while len(mess_recive_b) < mess_b_len:
-        chunk = client.recv(min(mess_b_len - len(mess_recive_b), 16*1024))
-        if not chunk:
-            # error
-            break
-        print(len(chunk))
-        mess_recive_b += chunk
-    
+        try:
+            if timeout:
+                remaining_timeout = timeout - (time.time() - start_time)
+                client.settimeout(remaining_timeout)
+            chunk = client.recv(min(mess_b_len - len(mess_recive_b), 16*1024))
+            if not chunk:
+                # error
+                break
+            mess_recive_b += chunk
+        except socket.timeout:
+            print("Timeout while receiving message content")
+            return None
+
     if len(mess_recive_b) < mess_b_len:
         # error
         return None
     
+    client.settimeout(None)
+    
     try:
         mess = pickle.loads(mess_recive_b)
+        print(f"transmit time: {time.time() - start_time}")
         return mess
     except pickle.UnpicklingError as e:
         print(f"Errpr unpickling data {e}")
