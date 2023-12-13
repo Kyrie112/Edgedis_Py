@@ -5,6 +5,7 @@ import string
 import socket
 import message
 import time
+import math
 import pickle
 import re
 import util
@@ -55,8 +56,8 @@ class Thread_send_data(threading.Thread):
         n = len(self.send_clients)
         chars = string.ascii_lowercase + string.digits + string.ascii_uppercase
         random_data = ''.join(random.choices(chars, k=self.data_len))  # create a random string as datas
-        block_size = int(self.data_len / self.block_cnt)
-        data_blocks = [random_data[i:i+block_size] for i in range(self.data_len - block_size + 1)]
+        block_size = math.ceil(self.data_len / self.block_cnt) 
+        data_blocks = [random_data[i:i+block_size] for i in range(0, self.data_len, block_size)]
         each_cnt = int(self.block_cnt / n)
         ind_block = 0
         # print(data_blocks, self.block_id)
