@@ -4,6 +4,7 @@ import socket
 import time
 import json
 
+
 def load_config(file_path):
     with open(file_path, 'r') as file:
         config = json.load(file)
@@ -41,11 +42,11 @@ def recive_mess(client, timeout=None):
                 break
             len_pre += chunk
         except socket.timeout:
-            print("Timeout while receiving message length")
-            return None
+            # print("Timeout while receiving message length")
+            return None, "Timeout while receiving message length"
         
     if len(len_pre) < 4:
-        return None
+        return None, "len_pre length < 4"
     
     mess_b_len = struct.unpack("!I", len_pre)[0]
 
@@ -61,21 +62,20 @@ def recive_mess(client, timeout=None):
                 break
             mess_recive_b += chunk
         except socket.timeout:
-            print("Timeout while receiving message content")
-            return None
+            # print("Timeout while receiving message content")
+            return None, "Timeout while receiving message content"
 
     if len(mess_recive_b) < mess_b_len:
         # error
-        return None
+        return None, "mess_recive_b length < mess_b_len"
     
     client.settimeout(None)
     
     try:
         mess = pickle.loads(mess_recive_b)
-        print(f"transmit time: {time.time() - start_time}")
-        return mess
+        return mess, None
     except pickle.UnpicklingError as e:
-        print(f"Errpr unpickling data {e}")
-        return None
+        # print(f"Errpr unpickling data {e}")
+        return None, f"Error unpickling data {e}"
 
 

@@ -65,7 +65,7 @@ class Node:
         for i in range(self.num):
             id = i + 1
             if id != self.id:
-                client_thread = threading.Thread(target=self.connect_to_other, args=(self.server_host_list[id], self.server_port_list[id], id), name="client_thread")
+                client_thread = threading.Thread(target=self.connect_to_other, args=(self.server_host_list[id], self.server_port_list[id], id), name="connect_thread")
                 client_threads.append(client_thread)
                 client_thread.start()
 
@@ -139,7 +139,7 @@ class Node:
             threads = []
             with self.lock:            
                 for id, send_client in self.send_clients.items():
-                        thread = threading.Thread(target=self.Send_and_Handle_Response, args=(id, send_client, mess))
+                        thread = threading.Thread(target=self.Send_and_Handle_Response, args=(id, send_client, mess), name=f"send_vote_to_{id}")
                         thread.start()
                         threads.append(thread)
 
@@ -148,15 +148,23 @@ class Node:
             
 
     def handle_message(self, client):  # this function need to be run by a thread so that it can be run forever
+            from_id = None
             while True:
                 try:
-                    mess = self.Recive(client)
+                    if from_id is not None:
+                        logger.info(f"server is watting message from {from_id}...")
+
+                    mess, error_str = self.Recive(client)
 
                     if not mess:
+                        logger.info(error_str + f"{from_id}")
                         break
 
                     if mess.type == 'sign_in':
                         self.receive_clients[mess.server_id] = client
+                        from_id = mess.server_id
+                        current_thread = threading.current_thread()
+                        current_thread.name = f"handle_message_from_{from_id}"
                     elif mess.type == 'data_client':
                         self.receive_clients[0] = client
                     
@@ -312,7 +320,7 @@ class Node:
         self.data_ind[mess.data_id] = mess.data
         self.max_id = max(self.max_id, mess.data_id)
 
-        logger.debug(f"Received data block from {mess.id}, data id is {mess.data_id}. FROM [ip: {mess.from_host}, port: {mess.from_port}]")
+        logger.debug(f"Received data block from {mess.id}, data id is {mess.data_id} data length is {len(mess.data)}. FROM [ip: {mess.from_host}, port: {mess.from_port}]")
 
         mess_response = message.Message_Data_Sender_Response(self.id, mess.data_id, "True", self.server_host, self.server_port)
         self.Send(mess.id, self.receive_clients[mess.id], mess_response)
@@ -331,7 +339,7 @@ class Node:
             self.Send(0, self.receive_clients[0], mess_response)
 
     def Data_Client_Handle(self, mess):
-        logger.debug(f"Received data block from cloud, data id is {mess.data_id}. FROM: [ip: {mess.from_host}, port{mess.from_port}]")
+        logger.debug(f"Received data block from cloud, data id is {mess.data_id} data length is {len(mess.data)}. FROM: [ip: {mess.from_host}, port: {mess.from_port}]")
 
         # init some parament and store the data
         self.sub_status = 'sender'
@@ -348,7 +356,7 @@ class Node:
         threads = []
         with self.lock:            
             for id, send_client in self.send_clients.items():
-                    thread = threading.Thread(target=self.Send_and_Handle_Response, args=(id, send_client, mess_send))
+                    thread = threading.Thread(target=self.Send_and_Handle_Response, args=(id, send_client, mess_send), name=f"send_data_to_{id}")
                     thread.start()
                     threads.append(thread)
 
@@ -385,14 +393,14 @@ class Node:
                 util.send_mess(send_client, mess)
             except Exception as e:
                 logger.info(f"Error sending message to {id}: {e}")
-                continue
+                break
             
             # recive response 
             try:
-                mess_send_response = util.recive_mess(send_client, timeout)
+                mess_send_response, error_str = util.recive_mess(send_client, timeout)
                 # print(mess_send_response)
                 if not mess_send_response:
-                    raise TimeoutError("Receive time exceeded")
+                    raise TimeoutError(error_str)
                 if mess_send_response.type == 'data_sender_response':
                     self.Data_Sender_Response_Handle(mess_send_response)
                 elif mess_send_response.type == 'data_request_response':
@@ -404,7 +412,7 @@ class Node:
                 break
             except TimeoutError as Te:
                 logger.info(f"Response timed out. Retry... {Te}")
-                continue
+                break
                 # Implement timeout retry logic, todo...
     
     def Send(self, id, send_client, mess):
@@ -424,7 +432,7 @@ class Node:
         with self.sublock:
             # logger.info("broadcast heartbeat lock get")   
             for id, send_client in self.send_clients.items():
-                    thread = threading.Thread(target=self.Send_and_Handle_Response, args=(id, send_client, mess))
+                    thread = threading.Thread(target=self.Send_and_Handle_Response, args=(id, send_client, mess), name=f"send_heartbeat_to_{id}")
                     thread.start()
                     threads.append(thread)
         

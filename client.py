@@ -11,15 +11,32 @@ import util
 
 
 class Thread_send_block(threading.Thread):
-    def __init__(self, data_block, send_client, id):
+    def __init__(self, data_block, send_client, id, lock):
         super(Thread_send_block, self).__init__()
         self.data_block = data_block
         self.send_client = send_client
         self.id = id
+        self.lock = lock
 
     def run(self):
         mess = message.Message_Data_Client(self.data_block, self.id, "0.0.0.0", 0)    # how to send out a data whose type is a struct
-        util.send_mess(self.send_client, mess)
+        start_time = time.time()
+        with self.lock:
+            util.send_mess(self.send_client, mess)
+
+            try:
+                mess_send_response = util.recive_mess(self.send_client, 0.25)
+                # print(mess_send_response)
+                if not mess_send_response:
+                    raise TimeoutError("Receive time exceeded")
+
+            except TimeoutError as Te:
+                pass
+
+        end_time = time.time()
+        print(f"elapsed time: {end_time - start_time}")
+            
+
 
 
 
@@ -43,17 +60,26 @@ class Thread_send_data(threading.Thread):
         each_cnt = int(self.block_cnt / n)
         ind_block = 0
         # print(data_blocks, self.block_id)
+
+        tsbs = []
+        locks = []
+        print("data get...")
         for ind in range(n):  # start sending the data blocks
             cnt = 0
+            lock = threading.Lock()
             while ind_block < len(data_blocks):
                 # print(ind, ind_block, data_blocks)
-                tsb = Thread_send_block(data_blocks[ind_block], self.send_clients[ind], self.block_id + ind_block)
+                tsb = Thread_send_block(data_blocks[ind_block], self.send_clients[ind], self.block_id + ind_block, lock)
                 cnt += 1
                 ind_block += 1
                 tsb.start()
+                tsbs.append(tsb)
                 if cnt == each_cnt:  # enough data blocks for this server
                     break
-
+            locks.append(lock)
+        
+        for tsb in tsbs:
+            tsb.join()
 
 class Client:
     def __init__(self, client_host, client_port):
