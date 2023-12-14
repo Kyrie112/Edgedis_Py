@@ -453,7 +453,7 @@ if __name__ == "__main__":
     local_ip, local_port, local_id = config["server_host_private"][args.server_id - 1], config["server_port"][args.server_id - 1], args.server_id
 
     server = Node(local_ip, local_port, local_id)
-    server.server_host_list = server.server_host_list + config["server_host_public"]
+    server.server_host_list = server.server_host_list + config["server_host_private"]
     server.server_port_list = server.server_port_list + config["server_port"]
     server.num = len(config["server_host_public"])
 

@@ -21,24 +21,27 @@ class Thread_send_block(threading.Thread):
         self.send_client = send_client
         self.id = id
         self.lock = lock
+        self.start_time = None
+        self.end_time = None
 
     def run(self):
         mess = message.Message_Data_Client(self.data_block, self.id, "0.0.0.0", 0)    # how to send out a data whose type is a struct
-        start_time = time.time()
         with self.lock:
+            self.start_time = time.time()
+            logger.info(f"Sending data block {self.id}")
             util.send_mess(self.send_client, mess)
-
+            logger.info(f"Sent data block {self.id}")
             try:
-                mess_send_response = util.recive_mess(self.send_client, 0.25)
-                # print(mess_send_response)
+                mess_send_response, error_str = util.recive_mess(self.send_client)
                 if not mess_send_response:
-                    raise TimeoutError("Receive time exceeded")
+                    raise TimeoutError(error_str)
+                logger.info(f"Received response for data block {self.id}")
 
             except TimeoutError as Te:
-                pass
+                logger.info(f"Response timed out... {Te}")
 
-        end_time = time.time()
-        logger.info(f"elapsed time: {end_time - start_time}")
+            self.end_time = time.time()
+
             
 
 
@@ -71,7 +74,7 @@ class Thread_send_data(threading.Thread):
             cnt = 0
             lock = threading.Lock()
             while ind_block < len(data_blocks):
-                # print(ind, ind_block, data_blocks)
+                print(data_blocks[ind_block][:10])
                 tsb = Thread_send_block(data_blocks[ind_block], self.send_clients[ind], self.block_id + ind_block, lock, f"send_data_{ind_block}_to_{ind+1}")
                 cnt += 1
                 ind_block += 1
@@ -83,6 +86,11 @@ class Thread_send_data(threading.Thread):
         
         for tsb in tsbs:
             tsb.join()
+            start_time = tsb.start_time
+            end_time = tsb.end_time
+            if start_time is not None and end_time is not None:
+                transfer_time = end_time - start_time
+                print(f"Data block {tsb.id} transfer time: {transfer_time} seconds")
 
 class Client:
     def __init__(self, client_host, client_port):
