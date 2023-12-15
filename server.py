@@ -75,7 +75,7 @@ class Node:
 
         logger.info(f"All Server Connected...")
 
-        # self.start_vote()
+        self.start_vote()
     
     def start_server(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -97,33 +97,36 @@ class Node:
 
                 mess_sign_in = message.Message_Sign_In(self.server_host, self.server_port, self.id)
 
-                self.Send(id, client_socket, mess_sign_in)
-
-                logger.info(f"Connected to server {ip}:{port}")
-
                 # append in send client list
                 with self.lock:
                     self.send_clients[id] = client_socket
+
+                self.Send(id, 1, mess_sign_in) # send_client
+
+                logger.info(f"Connected to server {ip}:{port}")
+
 
                 break
             except Exception as e:
                 logger.info(f"Error connecting to server {ip}:{port}: {e}")
                 time.sleep(1)
     
-    def start_vote(self):  # need to be implemented
+    def start_vote(self):
         while True:
-            # logger.info(f"c: {self.coordinator_id}, s: {self.status}")
+            logger.info(f"c: {self.coordinator_id}, s: {self.status}")
             if self.status == 'coordinator':
                 time.sleep(0.05)
                 self.Broadcast_Heartbeat()
                 continue
             now_time = self.last_heartbeat = time.time()
+            # election timeout
             while True:
-                # logger.info(f"c: {self.coordinator_id}, s: {self.status}")
-                random_time = random.uniform(0, 0.25)
+                random_time = 0.125 + random.uniform(0, 0.125)
                 time.sleep(random_time)
+                logger.info(f"c: {self.coordinator_id}, s: {self.status}")
                 now_time = time.time()
-                if now_time - self.last_heartbeat > 0.05:
+                if now_time - self.last_heartbeat > random_time:
+                    logger.info(f"time: {now_time - self.last_heartbeat}")
                     break
 
             # need to broadcast the vote request
@@ -139,7 +142,7 @@ class Node:
             threads = []
             with self.lock:            
                 for id, send_client in self.send_clients.items():
-                        thread = threading.Thread(target=self.Send_and_Handle_Response, args=(id, send_client, mess), name=f"send_vote_to_{id}")
+                        thread = threading.Thread(target=self.Send_and_Handle_Response, args=(id, 1, mess), name=f"send_vote_to_{id}") # send_client
                         thread.start()
                         threads.append(thread)
 
@@ -254,7 +257,7 @@ class Node:
         # create a response and send to the coordinator
         mess = message.Message_Heartbeat_Response(self.id, miss_data_block, self.max_id,
                                                   self.term, self.server_host, self.server_port)
-        self.Send(id, s, mess)
+        self.Send(id, 0, mess) # receive_client
 
     def Heartbeat_Response_Handle(self, mess):
         # supply the follower with the data it needs
@@ -265,7 +268,7 @@ class Node:
             data_block.append(self.data_ind[ind])
         if len(data_block) != 0:
             mess1 = message.Message_Data_Supplement(data_block, data_block_id)
-            self.Send(mess.id, s, mess1)
+            self.Send(mess.id, 1, mess1) # send_client
         # check if there is any new data that followers process
         request_list = []
         if mess.max_id > self.max_id:
@@ -277,7 +280,7 @@ class Node:
         # send out the request
         if len(request_list) != 0:
             mess2 = message.Message_Data_Request(self.server_host, self.server_port, request_list)
-            self.Send_and_Handle_Response(mess.id, s, mess2)
+            self.Send_and_Handle_Response(mess.id, 1, mess2) # send_client
 
 
         if mess.term > self.term:
@@ -299,7 +302,7 @@ class Node:
         else:
             mess_vr = message.Message_Vote_Response(self.id, False, self.term, self.server_host, self.server_port)
         
-        self.Send(id, s, mess_vr)
+        self.Send(id, 0, mess_vr) # receive_client
 
     def Vote_Response_Handle(self, mess):
         n = self.num  # the count of the servers
@@ -323,7 +326,7 @@ class Node:
         logger.debug(f"Received data block from {mess.id}... [data_id: {mess.data_id}, data_len: {len(mess.data)}, ip: {mess.from_host}, port: {mess.from_port}]")
 
         mess_response = message.Message_Data_Sender_Response(self.id, mess.data_id, "True", self.server_host, self.server_port)
-        self.Send(mess.id, self.receive_clients[mess.id], mess_response)
+        self.Send(mess.id, 0, mess_response) # receive_client
 
     def Data_Sender_Response_Handle(self, mess):
         logger.debug(f"Received response from {mess.id}... [data_id: {mess.data_id}, ip: {mess.from_host}, port: {mess.from_port}]")
@@ -336,7 +339,7 @@ class Node:
             self.sub_status = 'receiver'  # need to step back to receiver
 
             mess_response = message.Message_Data_Client_Response(self.id, mess.data_id, True, self.server_host, self.server_port)
-            self.Send(0, self.receive_clients[0], mess_response)
+            self.Send(0, 0, mess_response) # receive_client (cloud)
 
     def Data_Client_Handle(self, mess):
         logger.debug(f"Received data block from cloud... [data_id: {mess.data_id}, data_len: {len(mess.data)}, ip: {mess.from_host}, port: {mess.from_port}]")
@@ -356,7 +359,7 @@ class Node:
         threads = []
         with self.lock:            
             for id, send_client in self.send_clients.items():
-                    thread = threading.Thread(target=self.Send_and_Handle_Response, args=(id, send_client, mess_send), name=f"send_data_to_{id}")
+                    thread = threading.Thread(target=self.Send_and_Handle_Response, args=(id, 1, mess_send), name=f"send_data_to_{id}") # send_client
                     thread.start()
                     threads.append(thread)
 
@@ -374,7 +377,7 @@ class Node:
             request_data.append(self.data_ind[ind])
         mess = message.Message_Data_Request_Response(self.server_host, self.server_port, request_list,
                                                      request_data)
-        self.Send(id, s, mess)
+        self.Send(id, 0, mess) # receive_client
 
     def Data_Request_Response_Handle(self, mess):
         # store the new data blocks that are processed by follower
@@ -386,14 +389,25 @@ class Node:
         for ind in range(len(mess.data_block_id)):
             self.data_ind[mess.data_block_id[ind]] = mess.data_block[ind]
     
-    def Send_and_Handle_Response(self, id, send_client, mess, timeout=0.25): # timeout parameter, unit: seconds
+    def Send_and_Handle_Response(self, send_id, sor, mess, timeout=0.25): # timeout parameter, unit: seconds
+        if sor: # 1 is send_client
+            send_client = self.send_clients[send_id]
+        else: # 0 is receive_client
+            send_client = self.receive_clients[send_id]
+        
         while True:
             # send
             try:
                 util.send_mess(send_client, mess)
             except Exception as e:
-                logger.info(f"Error sending message to {id}: {e}")
-                break
+                logger.info(f"Error sending message to {send_id}: {e}")
+                if sor:
+                    send_client.close()
+                    client_thread = threading.Thread(target=self.connect_to_other, args=(self.server_host_list[send_id], self.server_port_list[send_id], send_id), name="connect_thread")
+                    client_thread.start()
+                    client_thread.join()
+                    send_client = self.send_clients[send_id]
+                continue
             
             # recive response 
             try:
@@ -415,7 +429,12 @@ class Node:
                 break
                 # Implement timeout retry logic, todo...
     
-    def Send(self, id, send_client, mess):
+    def Send(self, send_id, sor, mess):
+        if sor: # 1 is send_client
+            send_client = self.send_clients[send_id]
+        else: # 0 is receive_client
+            send_client = self.receive_clients[send_id]
+        
         try:
             util.send_mess(send_client, mess)
         except Exception as e:
@@ -432,7 +451,7 @@ class Node:
         with self.sublock:
             # logger.info("broadcast heartbeat lock get")   
             for id, send_client in self.send_clients.items():
-                    thread = threading.Thread(target=self.Send_and_Handle_Response, args=(id, send_client, mess), name=f"send_heartbeat_to_{id}")
+                    thread = threading.Thread(target=self.Send_and_Handle_Response, args=(id, 1, mess), name=f"send_heartbeat_to_{id}") # send_client
                     thread.start()
                     threads.append(thread)
         
