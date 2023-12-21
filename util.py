@@ -36,21 +36,21 @@ def recive_mess(client, timeout=None):
 
     len_pre = b""
     while len(len_pre) < 4:
-        try:
-            if timeout:
-                remaining_timeout = timeout - (time.time() - start_time)
-                if remaining_timeout < 0:
-                    raise TimeoutError("Timeout while receiving message length")
-                client.settimeout(remaining_timeout)
-            chunk = client.recv(4 - len(len_pre))
-            if not chunk:
-                # error
-                break
-            len_pre += chunk
-        except:
-            logger.info("Timeout while receiving message length")
-            client.settimeout(None)
-            return None, "Timeout while receiving message length"
+        # try:
+        if timeout:
+            remaining_timeout = timeout - (time.time() - start_time)
+            if remaining_timeout < 0:
+                raise TimeoutError("Timeout while receiving message length")
+            client.settimeout(remaining_timeout)
+        chunk = client.recv(4 - len(len_pre))
+        if not chunk:
+            # error
+            break
+        len_pre += chunk
+        # except:
+        #     logger.info("Timeout while receiving message length")
+        #     client.settimeout(None)
+        #     return None, "Timeout while receiving message length"
     
     if len(len_pre) == 0:
         client.settimeout(None)

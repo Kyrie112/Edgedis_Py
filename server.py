@@ -75,7 +75,7 @@ class Node:
 
         logger.info(f"All Server Connected...")
 
-        self.start_vote()
+        # self.start_vote()
     
     def start_server(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -113,7 +113,7 @@ class Node:
     
     def start_vote(self):
         while True:
-            logger.info(f"c: {self.coordinator_id}, s: {self.status}")
+            logger.debug(f"c: {self.coordinator_id}, s: {self.status}")
             if self.status == 'coordinator':
                 time.sleep(0.05)
                 self.Broadcast_Heartbeat()
@@ -123,10 +123,10 @@ class Node:
             while True:
                 random_time = 0.125 + random.uniform(0, 0.125)
                 time.sleep(random_time)
-                logger.info(f"c: {self.coordinator_id}, s: {self.status}")
+                logger.debug(f"c: {self.coordinator_id}, s: {self.status}")
                 now_time = time.time()
                 if now_time - self.last_heartbeat > random_time:
-                    logger.info(f"time: {now_time - self.last_heartbeat}")
+                    logger.debug(f"time: {now_time - self.last_heartbeat}")
                     break
 
             # need to broadcast the vote request
@@ -154,8 +154,8 @@ class Node:
             from_id = None
             while True:
                 try:
-                    if from_id is not None:
-                        logger.info(f"server is watting message from {from_id}...")
+                    # if from_id is not None:
+                    #     logger.debug(f"server is watting message from {from_id}...")
 
                     mess, error_str = self.Recive(client)
 
@@ -253,7 +253,10 @@ class Node:
         # check the term of the coordinator
         if self.term < mess.term:
             self.term = mess.term
+            if self.coordinator_id != mess.id:
+                logger.info(f"server {mess.id} become the coordinator...")
             self.coordinator_id = mess.id
+            
         # create a response and send to the coordinator
         mess = message.Message_Heartbeat_Response(self.id, miss_data_block, self.max_id,
                                                   self.term, self.server_host, self.server_port)
@@ -389,7 +392,7 @@ class Node:
         for ind in range(len(mess.data_block_id)):
             self.data_ind[mess.data_block_id[ind]] = mess.data_block[ind]
     
-    def Send_and_Handle_Response(self, send_id, sor, mess, timeout=0.25): # timeout parameter, unit: seconds
+    def Send_and_Handle_Response(self, send_id, sor, mess, timeout=None): # timeout parameter, unit: seconds
         if sor: # 1 is send_client
             send_client = self.send_clients[send_id]
         else: # 0 is receive_client
