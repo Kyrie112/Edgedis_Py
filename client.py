@@ -6,13 +6,21 @@ import socket
 import message
 import time
 import math
+import csv
 import pickle
 import re
 import util
 import logging
 
-logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s')
+logger = logging.getLogger(__name__)
+
+handler = logging.FileHandler('cloud.log', encoding='UTF-8')
+handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s')
+handler.setFormatter(formatter)
+
+logger.addHandler(handler)
 
 class Thread_send_block(threading.Thread):
     def __init__(self, data_block, send_client, id, lock, name):
@@ -98,26 +106,41 @@ class Client:
     def send_data(self):
         # considering a single entry server for now
         test_round = int(input('please input the test round number: '))
+        data_len = int(input('please input the size of the data: '))
+        block_cnt = int(input('please input the count of the data block: '))
+        entry_cnt = int(input('please input the count of the entry server: '))
+        # block_id = self.block_send_out + 1
+        
+        n = entry_cnt
+        chars = string.ascii_lowercase + string.digits + string.ascii_uppercase
+        random_data = ''.join(random.choices(chars, k=data_len))  # create a random string as datas
+        block_size = math.ceil(data_len / block_cnt) 
+        data_blocks = [random_data[i:i+block_size] for i in range(0, data_len, block_size)]
+        each_cnt = int(block_cnt / n)
+        ind_block = 0
+        # print(data_blocks, self.block_id)
+        
+        experiment_data = []
         while True:
-            data_len = int(input('please input the size of the data: '))
-            block_cnt = int(input('please input the count of the data block: '))
-            entry_cnt = int(input('please input the count of the entry server: '))
+            # data_len = int(input('please input the size of the data: '))
+            # block_cnt = int(input('please input the count of the data block: '))
+            # entry_cnt = int(input('please input the count of the entry server: '))
             block_id = self.block_send_out + 1
-
-            n = entry_cnt
-            chars = string.ascii_lowercase + string.digits + string.ascii_uppercase
-            random_data = ''.join(random.choices(chars, k=data_len))  # create a random string as datas
-            block_size = math.ceil(data_len / block_cnt) 
-            data_blocks = [random_data[i:i+block_size] for i in range(0, data_len, block_size)]
-            each_cnt = int(block_cnt / n)
-            ind_block = 0
-            # print(data_blocks, self.block_id)
+            
+            # n = entry_cnt
+            # chars = string.ascii_lowercase + string.digits + string.ascii_uppercase
+            # random_data = ''.join(random.choices(chars, k=data_len))  # create a random string as datas
+            # block_size = math.ceil(data_len / block_cnt) 
+            # data_blocks = [random_data[i:i+block_size] for i in range(0, data_len, block_size)]
+            # each_cnt = int(block_cnt / n)
+            # ind_block = 0
+            # # print(data_blocks, self.block_id)
 
             tsbs = []
             start_ind = 0
             end_ind = each_cnt
             for ind in range(n):  # start sending the data blocks
-                print(start_ind, end_ind, each_cnt)
+                # print(start_ind, end_ind, each_cnt)
 
                 tsb = threading.Thread(target=self.send_block, args=(data_blocks, start_ind, end_ind, ind+1, block_id), name=f"send_data_to_{ind+1}")
                 tsb.start()
@@ -132,32 +155,60 @@ class Client:
                 tsb.join()
             all_end_time = time.time()
             logger.info(f"Data transfer time: {all_end_time - all_start_time} seconds")
+            experiment_data.append(all_end_time - all_start_time)
             
             self.block_send_out += block_cnt
             logger.info('the data has been sent to entry servers(senders)')
             
             test_round -= 1
             if test_round == 0:
+                # 计算平均值
+                average_time = sum(experiment_data) / len(experiment_data)
+
+                # 计算最大值和最小值
+                max_time = max(experiment_data)
+                min_time = min(experiment_data)
+
+                logger.info(f"平均传输时间: {average_time}")
+                logger.info(f"最大传输时间: {max_time}")
+                logger.info(f"最小传输时间: {min_time}")
+                
+                current_time = time.strftime("%Y_%m_%d_%H_%M")
+                csv_file_path = f'experiment_{data_len}_{block_cnt}_{current_time}.csv'
+
+                with open(csv_file_path, 'w', newline='') as csvfile:
+                    # 创建CSV写入对象
+                    csv_writer = csv.writer(csvfile)
+
+                    # 写入表头
+                    csv_writer.writerow(['Experiment Iteration', 'Transmission Time'])
+
+                    # 写入数据
+                    for i, time_value in enumerate(experiment_data, start=1):
+                        csv_writer.writerow([i, time_value])
+                
                 break
     
     def send_block(self, data_blocks, start_ind, end_ind, server_id, block_id):
-        print(start_ind, end_ind)
+        logger.info(f"Server {server_id} start to send data block")
+        # print(start_ind, end_ind)
         send_lock = threading.Lock()
         for ind_block in range(start_ind, end_ind):
             data_block = data_blocks[ind_block]
             id = block_id + ind_block
-            print(id, block_id, ind_block)
+            # print(id, block_id, ind_block)
             mess = message.Message_Data_Client(data_block, id, "0.0.0.0", 0)    # how to send out a data whose type is a struct
             send_client = self.send_clients[server_id]
             with send_lock:
+                start_time = time.time()
                 while True:
                     try:
-                        start_time = time.time()
                         logger.info(f"Sending data block {id}")
                         util.send_mess(send_client, mess)
                         logger.info(f"Sent data block {id}")
                     
-                    except: # reconnect
+                    except Exception as e: # reconnect
+                        logger.error(f"Error while sending data block {id}: {e}")
                         send_client.close()
                         client_thread = threading.Thread(target=self.connect_to_server, args=(self.server_host[server_id], self.server_port[server_id], server_id), name="connect_thread")
                         client_thread.start()
@@ -165,15 +216,21 @@ class Client:
                         send_client = self.send_clients[server_id]
                         logger.debug("reconnect over") 
                         continue
+                    
                     try:
-                        mess_send_response, error_str = util.recive_mess(send_client)
-                        if not mess_send_response:
-                            raise TimeoutError(error_str)
-                        logger.info(f"Received response for data block {id}")
+                        while True:
+                            mess_send_response, error_str = util.recive_mess(send_client)
+                            if not mess_send_response:
+                                raise TimeoutError(error_str)
+                            
+                            if mess_send_response.data_id == id:
+                                logger.info(f"Received response for data block {id}")
+                                break
                         break
-     
+    
                     except TimeoutError as Te:
                         logger.info(f"Response timed out... {Te}")
+                        continue
 
                 end_time = time.time()
                 transfer_time = end_time - start_time
@@ -211,9 +268,9 @@ if __name__ == "__main__":  # can this code be arranged in server?
     # no need?
     Edge_Cloud = Client(cloud_host, cloud_port)  # create an edge server cloud
     # server 1 is entry server, for example.
-    Edge_Cloud.server_count = len(config["server_host_public"])
-    Edge_Cloud.server_host = Edge_Cloud.server_host + config["server_host_public"]
-    Edge_Cloud.server_port = Edge_Cloud.server_port + config["server_port"]
+    Edge_Cloud.server_count = len(config["server_host_public"][:1])
+    Edge_Cloud.server_host = Edge_Cloud.server_host + config["server_host_public"][:1]
+    Edge_Cloud.server_port = Edge_Cloud.server_port + config["server_port"][:1]
     Edge_Cloud.start()
     trr = threading.Thread(target=Edge_Cloud.send_data())    # a thread which can be run forever
     trr.setDaemon(True)

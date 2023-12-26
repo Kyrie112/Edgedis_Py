@@ -5,9 +5,15 @@ import time
 import json
 import logging
 
-logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s')
+logger = logging.getLogger(__name__)
 
+handler = logging.FileHandler('cloud.log', encoding='UTF-8')
+handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s')
+handler.setFormatter(formatter)
+
+logger.addHandler(handler)
 
 def load_config(file_path):
     with open(file_path, 'r') as file:
@@ -26,31 +32,27 @@ def send_mess(client, mess):
     mess_b_len = len(mess_b)
 
     len_pre = struct.pack("!I", mess_b_len)
+    combined_message = len_pre + mess_b
 
-    client.sendall(len_pre)
-    client.sendall(mess_b)
+    client.sendall(combined_message)
 
 
 def recive_mess(client, timeout=None):
-    start_time = time.time()
+    client.settimeout(timeout)
 
     len_pre = b""
     while len(len_pre) < 4:
-        # try:
-        if timeout:
-            remaining_timeout = timeout - (time.time() - start_time)
-            if remaining_timeout < 0:
-                raise TimeoutError("Timeout while receiving message length")
-            client.settimeout(remaining_timeout)
-        chunk = client.recv(4 - len(len_pre))
-        if not chunk:
-            # error
-            break
-        len_pre += chunk
-        # except:
-        #     logger.info("Timeout while receiving message length")
-        #     client.settimeout(None)
-        #     return None, "Timeout while receiving message length"
+        try:
+            chunk = client.recv(4 - len(len_pre))
+            if not chunk:
+                # error
+                break
+            len_pre += chunk
+            logger.info("Recived length chunk...")
+        except:
+            logger.error("Timeout while receiving message length")
+            client.settimeout(None)
+            return None, "Timeout while receiving message length"
     
     if len(len_pre) == 0:
         client.settimeout(None)
@@ -61,20 +63,19 @@ def recive_mess(client, timeout=None):
         return None, "len_pre length < 4"
     
     mess_b_len = struct.unpack("!I", len_pre)[0]
-
+    
+    logger.info(f"mess length: {mess_b_len}")
     mess_recive_b = b""
     while len(mess_recive_b) < mess_b_len:
         try:
-            if timeout:
-                remaining_timeout = timeout - (time.time() - start_time)
-                if remaining_timeout < 0:
-                    raise TimeoutError("Timeout while receiving message content")
-                client.settimeout(remaining_timeout)
-            chunk = client.recv(min(mess_b_len - len(mess_recive_b), 16*1024))
+            chunk = client.recv(min(mess_b_len - len(mess_recive_b), 100*1024*1024))
             if not chunk:
                 # error
                 break
             mess_recive_b += chunk
+            chunk_len = len(chunk)
+            now_mess_len = len(mess_recive_b)
+            logger.info(f"Recived message chunk, chunk length: {chunk_len}, now mess length: {now_mess_len}...")
         except:
             # print("Timeout while receiving message content")
             client.settimeout(None)

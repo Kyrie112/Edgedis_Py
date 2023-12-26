@@ -178,9 +178,14 @@ class Node:
                     elif self.status == 'coordinator':
                         self.coordinator_handle(mess)
 
+
                 except Exception as e:
+                    client.close()
                     logger.info(f"Error handling client :{e}")
                     break
+            
+            logger.info(f"Handling client over...")
+
     
     # these three functions is used for different roles
     def follower_handle(self, mess):
@@ -401,7 +406,12 @@ class Node:
         while True:
             # send
             try:
+                if mess.type == 'data_sender':
+                    logger.debug(f"Sending data block {mess.id} to server {send_id}")
                 util.send_mess(send_client, mess)
+                if mess.type == 'data_sender':
+                    logger.debug(f"Sent data block {mess.id} to server {send_id}")
+
             except Exception as e:
                 logger.info(f"Error sending message to {send_id}: {e}")
                 if sor:
