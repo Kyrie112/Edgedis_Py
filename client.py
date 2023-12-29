@@ -1,0 +1,214 @@
+# this is the code file for the cloud
+import threading
+import random
+import string
+import socket
+import message
+import time
+import math
+import pickle
+import re
+import util
+import logging
+import erasure_code
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s')
+
+
+class Thread_send_block(threading.Thread):
+    def __init__(self, data_block, padlen, send_client, id, lock, name, original_data_block_cnt, check_data_block_cnt):
+        super(Thread_send_block, self).__init__(name=name)
+        self.data_block = data_block
+        self.send_client = send_client
+        self.id = id
+        self.lock = lock
+        self.start_time = None
+        self.end_time = None
+        self.padlen = padlen
+        self.original_data_block_cnt = original_data_block_cnt
+        self.check_data_block_cnt = check_data_block_cnt
+
+    def run(self):
+        # changed after using erasure code
+        mess = message.Message_Data_Client(self.data_block, self.padlen, self.original_data_block_cnt,
+                                           self.check_data_block_cnt,
+                                           self.id, "0.0.0.0",0)  # how to send out a data whose type is a struct
+        with self.lock:
+            self.start_time = time.time()
+            logger.info(f"Sending data block {self.id}")
+            util.send_mess(self.send_client, mess)
+            logger.info(f"Sent data block {self.id}")
+            try:
+                mess_send_response, error_str = util.recive_mess(self.send_client)
+                if not mess_send_response:
+                    raise TimeoutError(error_str)
+                logger.info(f"Received response for data block {self.id}")
+
+            except TimeoutError as Te:
+                logger.info(f"Response timed out... {Te}")
+
+            self.end_time = time.time()
+
+
+class Thread_send_data(threading.Thread):
+    def __init__(self, data_len, data_block_cnt, check_data_block_cnt, send_clients, block_id):  # the data here needs to be a string
+        super(Thread_send_data, self).__init__()
+        self.data_len = data_len  # create a string with the length is data_len
+        self.data_block_cnt = data_block_cnt  # the count of the original data blocks
+        self.check_data_block_cnt = check_data_block_cnt    # the count of the check data blocks
+        self.send_clients = send_clients  # the list of server ids which are going to become senders
+        # self.server_host = server_host  # the list of server hosts which are going to become senders
+        # self.server_port = server_port  # the list of server ports which are going to become receivers(should be
+        # senders)
+        self.block_id = block_id
+
+    def run(self):
+        n = len(self.send_clients)
+        chars = string.ascii_lowercase + string.digits + string.ascii_uppercase
+        random_data = ''.join(random.choices(chars, k=self.data_len))  # create a random string as datas
+        # use erasure code to encode the data and return the padding length of the data
+        data_blocks, padlen = erasure_code.encoded_data(random_data, self.data_block_cnt, self.check_data_block_cnt + self.data_block_cnt)
+        # need to fulfill the string with padlen
+        ind_block = 0
+        each_cnt = int((self.data_block_cnt + self.check_data_block_cnt) / n)
+        # after initialing these data, client needs to send out data block
+        # print(data_blocks, self.block_id)
+
+        tsbs = []
+        locks = []
+        for ind in range(n):  # start sending the data blocks
+            cnt = 0
+            lock = threading.Lock()
+            while ind_block < len(data_blocks):
+                print(data_blocks[ind_block][:10])
+                tsb = Thread_send_block(data_blocks[ind_block], padlen, self.send_clients[ind], self.block_id + ind_block, lock,
+                                        f"send_data_{ind_block}_to_{ind + 1}", self.data_block_cnt, self.check_data_block_cnt)
+                cnt += 1
+                ind_block += 1
+                tsb.start()
+                tsbs.append(tsb)
+                if cnt == each_cnt:  # enough data blocks for this server
+                    break
+            locks.append(lock)
+
+        for tsb in tsbs:
+            tsb.join()
+            start_time = tsb.start_time
+            end_time = tsb.end_time
+            if start_time is not None and end_time is not None:
+                transfer_time = end_time - start_time
+                print(f"Data block {tsb.id} transfer time: {transfer_time} seconds")
+
+
+class Client:
+    def __init__(self, client_host, client_port,):
+        self.block_send_out = 0  # store the count of blocks which have been sent out
+        self.server_count = 0  # store the count of servers
+        self.server_host = []  # store the host of each server
+        self.server_port = []  # store the port of each server
+        self.send_clients = {}  # store the client established for connecting of each server
+        self.data_dict = dict()  # store the statues of each data transmission
+        self.ready = True  # whether the cloud is ready for a new file
+        self.lock = threading.Lock()
+        self.c = socket.socket()
+        self.c.bind((client_host, client_port))
+        self.c.listen(6)  # the parament can be set by yourself
+
+    def start(self):
+        client_threads = []
+        for i in range(self.server_count):
+            ip = self.server_host[i]
+            port = self.server_port[i]
+            id = i + 1
+            client_thread = threading.Thread(target=self.connect_to_server, args=(ip, port, id), name="client_thread")
+            client_threads.append(client_thread)
+            client_thread.start()
+
+        for client_thread in client_threads:
+            client_thread.join()
+
+        logger.info(f"All Server Connected...")
+
+    def connect_to_server(self, ip, port, id):
+        while True:
+            try:
+                client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                client_socket.connect((ip, port))
+
+                print(f"Connected to server {ip}:{port}")
+
+                # add the new connection to the send_clients list
+                with self.lock:
+                    self.send_clients[id] = client_socket
+
+                break
+            except Exception as e:
+                print(f"Error connecting to peer {ip}:{port}: {e}")
+                time.sleep(1)
+                # add retry logic or wait for a period before connecting again    
+
+    def send_data(self):
+        # considering a single entry server for now
+        while True:
+            data_len = int(input('please input the size of the data: '))
+            original_data_block_cnt = int(input('please input the count of the data block: '))
+            check_data_block_cnt = int(input('please input the count of the check data block: '))
+            entry_cnt = int(input('please input the count of the entry server: '))
+            # the count of total data blocks need to be changed here
+            block_cnt = original_data_block_cnt + check_data_block_cnt
+            # start sending
+            tsd = Thread_send_data(data_len, original_data_block_cnt, check_data_block_cnt, [self.send_clients[i + 1] for i in range(entry_cnt)],
+                                   self.block_send_out + 1)
+            tsd.start()
+            tsd.join()  # need to wait until each server has received the data
+            self.block_send_out += block_cnt
+            logger.info('the data has been sent to entry servers(senders)')
+
+    def receive_response(self):  # this function is used to receiver response
+        while True:
+            conn, addr = self.c.accept()
+            data = conn.recv(2048)
+            data = data.decode()  # something wrong here(how to let data be a struct?)
+            if data.type == 'data_sender_response':
+                self.data_dict[data.id] = True  # tag it
+            elif data.type == 'sign_in':  # new server has joined(not complete here, don't know how to continue)
+                self.server_count += 1
+                self.server_host.append(data.server_host)
+                self.server_port.append(data.server_port)
+
+    def Data_Client_Response_Handle(self, mess):
+        if mess.status:
+            self.data_dict[mess.data_id] = True
+        tag = True
+        # check whether all data has been transmitted to the servers successfully
+        for ind in range(self.data_send_out):
+            if self.data_dict.get(ind) is None:
+                tag = False
+                break
+        self.ready = tag
+
+
+if __name__ == "__main__":  # can this code be arranged in server?
+    config = util.load_config("./config.json")
+
+    cloud_host = config["cloud_host"]
+    cloud_port = config["cloud_port"]
+    # no need?
+    Edge_Cloud = Client(cloud_host, cloud_port)  # create an edge server cloud
+    # server 1 is entry server, for example.
+    Edge_Cloud.server_count = 2
+    Edge_Cloud.server_host = config["server_host_public"]
+    Edge_Cloud.server_port = config["server_port"]
+    Edge_Cloud.start()
+    trr = threading.Thread(target=Edge_Cloud.send_data())  # a thread which can be run forever
+    trr.setDaemon(True)
+    trr.start()
+
+    # while True:
+    #     flag = input('need to send data? 1.Yes 0.No')
+    #     if flag == 1:
+    #         Edge_Cloud.send_data()
+    #     else:
+    #         break
+    # print('End')

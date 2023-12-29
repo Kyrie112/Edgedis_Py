@@ -1,0 +1,13 @@
+{
+    "cloud_host": "127.0.0.1",
+    "cloud_port": 8051,
+    "server_host_public": [
+        "127.0.0.1", "127.0.0.1"
+    ],
+    "server_host_private": [
+        "127.0.0.1", "127.0.0.1"
+    ],
+    "server_port": [
+        8888, 8889
+    ]
+}
