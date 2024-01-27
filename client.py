@@ -11,6 +11,7 @@ import pickle
 import re
 import util
 import logging
+import queue
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -22,37 +23,24 @@ handler.setFormatter(formatter)
 
 logger.addHandler(handler)
 
-class Thread_send_block(threading.Thread):
-    def __init__(self, data_block, send_client, id, lock, name):
-        super(Thread_send_block, self).__init__(name=name)
-        self.data_block = data_block
-        self.send_client = send_client
-        self.id = id
-        self.lock = lock
-        self.start_time = None
-        self.end_time = None
+import argparse
 
-    def run(self):
-        mess = message.Message_Data_Client(self.data_block, self.id, "0.0.0.0", 0)    # how to send out a data whose type is a struct
-        with self.lock:
-            try:
-                self.start_time = time.time()
-                logger.info(f"Sending data block {self.id}")
-                util.send_mess(self.send_client, mess)
-                logger.info(f"Sent data block {self.id}")
-            except:
-                pass
-            try:
-                mess_send_response, error_str = util.recive_mess(self.send_client)
-                if not mess_send_response:
-                    raise TimeoutError(error_str)
-                logger.info(f"Received response for data block {self.id}")
+def construct_hyper_param(parser):
+    parser.add_argument('-test_round', required=True, default=1, type=int,
+                        help='test round')
+    parser.add_argument('-data_len', required=True, default=512000, type=int,
+                        help='data size')
+    parser.add_argument('-block_cnt', required=True, default=1, type=int,
+                        help='data block num')
+    parser.add_argument('-entry_cnt', required=True, default=1, type=int,
+                        help='entry server cnt')
 
-            except TimeoutError:
-                logger.info(f"Response timed out... {error_str}")
+    args = parser.parse_args()
 
-            self.end_time = time.time()
-    
+    random_seed = 1234
+
+    return args
+
 class Client:
     def __init__(self, client_host, client_port):
         self.block_send_out = 0  # store the count of blocks which have been sent out
@@ -62,10 +50,17 @@ class Client:
         self.send_clients ={} # store the client established for connecting of each server
         self.data_dict = dict()  # store the statues of each data transmission
         self.ready = True   # whether the cloud is ready for a new file
+        self.args = None
+        self.entry_cnt = None
+        self.timeout = None
+        self.data_que = dict()
+        self.que_lock = dict()
         self.lock = threading.Lock()
+        self.thread_exit_event = threading.Event()
         self.c = socket.socket()
         self.c.bind((client_host, client_port))
         self.c.listen(6)  # the parament can be set by yourself
+
     
     def start(self):
         client_threads = []
@@ -86,6 +81,7 @@ class Client:
         while True:
             try:
                 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                # client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 16*1024*1024)
                 client_socket.connect((ip, port))
 
                 logger.info(f"Connected to server {ip}:{port}")
@@ -105,19 +101,21 @@ class Client:
 
     def send_data(self):
         # considering a single entry server for now
-        test_round = int(input('please input the test round number: '))
-        data_len = int(input('please input the size of the data: '))
-        block_cnt = int(input('please input the count of the data block: '))
-        entry_cnt = int(input('please input the count of the entry server: '))
+        test_round = self.args.test_round
+        data_len = self.args.data_len
+        block_cnt = self.args.block_cnt
+        entry_cnt = self.args.entry_cnt
         # block_id = self.block_send_out + 1
         
         n = entry_cnt
+        self.entry_cnt = entry_cnt
         chars = string.ascii_lowercase + string.digits + string.ascii_uppercase
         random_data = ''.join(random.choices(chars, k=data_len))  # create a random string as datas
         block_size = math.ceil(data_len / block_cnt) 
         data_blocks = [random_data[i:i+block_size] for i in range(0, data_len, block_size)]
         each_cnt = int(block_cnt / n)
         ind_block = 0
+        block_id = self.block_send_out + 1
         # print(data_blocks, self.block_id)
         
         experiment_data = []
@@ -125,7 +123,7 @@ class Client:
             # data_len = int(input('please input the size of the data: '))
             # block_cnt = int(input('please input the count of the data block: '))
             # entry_cnt = int(input('please input the count of the entry server: '))
-            block_id = self.block_send_out + 1
+            # block_id = self.block_send_out + 1
             
             # n = entry_cnt
             # chars = string.ascii_lowercase + string.digits + string.ascii_uppercase
@@ -174,7 +172,7 @@ class Client:
                 logger.info(f"最小传输时间: {min_time}")
                 
                 current_time = time.strftime("%Y_%m_%d_%H_%M")
-                csv_file_path = f'experiment_{data_len}_{block_cnt}_{current_time}.csv'
+                csv_file_path = f'experiment_{data_len}_{block_cnt}_{entry_cnt}_{current_time}.csv'
 
                 with open(csv_file_path, 'w', newline='') as csvfile:
                     # 创建CSV写入对象
@@ -186,81 +184,141 @@ class Client:
                     # 写入数据
                     for i, time_value in enumerate(experiment_data, start=1):
                         csv_writer.writerow([i, time_value])
+                    
+                    csv_writer.writerow(["average", average_time])
+                    csv_writer.writerow(["max", max_time])
+                    csv_writer.writerow(["min", min_time])
                 
                 break
     
     def send_block(self, data_blocks, start_ind, end_ind, server_id, block_id):
-        logger.info(f"Server {server_id} start to send data block")
-        # print(start_ind, end_ind)
         send_lock = threading.Lock()
-        for ind_block in range(start_ind, end_ind):
-            data_block = data_blocks[ind_block]
-            id = block_id + ind_block
-            # print(id, block_id, ind_block)
-            mess = message.Message_Data_Client(data_block, id, "0.0.0.0", 0)    # how to send out a data whose type is a struct
-            send_client = self.send_clients[server_id]
-            with send_lock:
-                start_time = time.time()
-                while True:
+
+        with self.que_lock[server_id]:
+            for ind_block in range(start_ind, end_ind):
+                data_block = data_blocks[ind_block]
+                id = block_id + ind_block
+                # print(id, block_id, ind_block)
+                mess = message.Message_Data_Client(data_block, id, "0.0.0.0", 0)
+                self.data_que[server_id].put(mess)
+        
+        logger.info(f"Server {server_id} start to send data block")
+
+        while True:
+            while(not self.data_que[server_id].empty()):
+                mess = self.data_que[server_id].queue[0]
+                send_client = self.send_clients[server_id]
+                # send_client.settimeout(self.timeout)
+                with send_lock:
+                    start_time = time.time()
                     try:
-                        logger.info(f"Sending data block {id}")
+                        logger.info(f"Sending data block {mess.data_id}")
                         util.send_mess(send_client, mess)
-                        logger.info(f"Sent data block {id}")
+                        logger.info(f"Sent data block {mess.data_id}")
+                        
+                        if self.timeout:
+                            if (self.timeout <= (time.time() - start_time)):
+                                raise TimeoutError("send timeout error...")
+
+                            remain_time = self.timeout - (time.time() - start_time)
+
+
+                        while True:
+                            if self.timeout:
+                                logger.info(f"Remain time for data block {mess.data_id}: {remain_time}")
+                                mess_send_response, error_str = util.recive_mess(send_client, remain_time)
+                            else:
+                                mess_send_response, error_str = util.recive_mess(send_client)
+                            # logger.info(f"Received response for data block {mess_send_response.data_id}")
+                            if not mess_send_response:
+                                raise TimeoutError(error_str)
+                            
+                            if mess_send_response.data_id == mess.data_id:
+                                logger.info(f"Received response for data block {mess.data_id}")
+                                break
+                            else:
+                                logger.info(f"Continue Reciving...")
+
+                            if self.timeout:
+                                if (self.timeout <= (time.time() - start_time)):
+                                    raise TimeoutError("recive timeout error...")
+                                
+                                remain_time = self.timeout - (time.time() - start_time)
+                            # logger.info(f"remain_time: {remain_time}")
+                        
+                        end_time = time.time()
+                        transfer_time = end_time - start_time
+                        logger.info(f"Data block {mess.data_id} transfer time: {transfer_time} seconds")
+
+                    except socket.timeout as Te:
+                        random_id = random.choice([i for i in range(1, self.entry_cnt + 1) if i != server_id])
+                        logger.error(f"Transfer timed out... {Te}")
+                        with self.que_lock[random_id]:
+                            self.data_que[random_id].put(mess)
+                            logger.error(f"server {random_id} add data block {mess.data_id}, now size: {self.data_que[random_id].qsize()}")
+                        
+                        end_time = time.time()
+                        transfer_time = end_time - start_time
+                        logger.error(f"Data block {mess.data_id} timeout time: {transfer_time} seconds")
+                        if self.timeout:
+                            send_client.settimeout(None)
+                    
+                    except TimeoutError as Te:
+                        random_id = random.choice([i for i in range(1, self.entry_cnt + 1) if i != server_id])
+                        logger.error(f"Transfer timed out... {Te}")
+                        with self.que_lock[random_id]:
+                            self.data_que[random_id].put(mess)
+                            logger.error(f"server {random_id} add data block {mess.data_id}, now size: {self.data_que[random_id].qsize()}")
+                        
+                        end_time = time.time()
+                        transfer_time = end_time - start_time
+                        logger.error(f"Data block {mess.data_id} timeout time: {transfer_time} seconds")
+                        if self.timeout:
+                            send_client.settimeout(self.timeout)
                     
                     except Exception as e: # reconnect
-                        logger.error(f"Error while sending data block {id}: {e}")
+                        logger.error(f"Error while sending data block {mess.data_id}: {e}")
                         send_client.close()
                         client_thread = threading.Thread(target=self.connect_to_server, args=(self.server_host[server_id], self.server_port[server_id], server_id), name="connect_thread")
                         client_thread.start()
                         client_thread.join()
                         send_client = self.send_clients[server_id]
                         logger.debug("reconnect over") 
-                        continue
+
+                        random_id = random.choice([i for i in range(1, self.entry_cnt + 1) if i != server_id])
+                        with self.que_lock[random_id]:
+                            self.data_que[random_id].put(mess)
+                            logger.info(f"server {random_id} add data block {mess.data_id}, now size: {self.data_que[random_id].qsize()}")
+                        if self.timeout:
+                            send_client.settimeout(None)
+
+                    with self.que_lock[server_id]:
+                        self.data_que[server_id].get()
+                        logger.info(f"server {server_id} remove data block {mess.data_id} now size: {self.data_que[server_id].qsize()}")
                     
-                    try:
-                        while True:
-                            mess_send_response, error_str = util.recive_mess(send_client)
-                            if not mess_send_response:
-                                raise TimeoutError(error_str)
-                            
-                            if mess_send_response.data_id == id:
-                                logger.info(f"Received response for data block {id}")
-                                break
-                        break
-    
-                    except TimeoutError as Te:
-                        logger.info(f"Response timed out... {Te}")
-                        continue
-
-                end_time = time.time()
-                transfer_time = end_time - start_time
-                logger.info(f"Data block {id} transfer time: {transfer_time} seconds")
-
-    def receive_response(self):  # this function is used to receiver response
-        while True:
-            conn, addr = self.c.accept()
-            data = conn.recv(2048)
-            data = data.decode()  # something wrong here(how to let data be a struct?)
-            if data.type == 'data_sender_response':
-                self.data_dict[data.id] = True  # tag it
-            elif data.type == 'sign_in':    # new server has joined(not complete here, don't know how to continue)
-                self.server_count += 1
-                self.server_host.append(data.server_host)
-                self.server_port.append(data.server_port)
-
-    def Data_Client_Response_Handle(self, mess):
-        if mess.status:
-            self.data_dict[mess.data_id] = True
-        tag = True
-        # check whether all data has been transmitted to the servers successfully
-        for ind in range(self.data_send_out):
-            if self.data_dict.get(ind) is None:
-                tag = False
+                    self.thread_exit_event.set()
+            
+            if self.data_que_empty():
                 break
-        self.ready = tag
+            
+            self.thread_exit_event.wait()
+            self.thread_exit_event.clear() 
+
+                    
+
+    def data_que_empty(self):
+        res = True
+        for i in range(self.entry_cnt):
+            logger.info(f"server {i+1}: {self.data_que[i+1].qsize()}")
+            if not self.data_que[i+1].empty():
+                res = False
+        return res
 
 
 if __name__ == "__main__":  # can this code be arranged in server?
+    parser = argparse.ArgumentParser()
+    args = construct_hyper_param(parser)
+
     config = util.load_config("./config.json")
 
     cloud_host = config["cloud_host"]
@@ -268,9 +326,13 @@ if __name__ == "__main__":  # can this code be arranged in server?
     # no need?
     Edge_Cloud = Client(cloud_host, cloud_port)  # create an edge server cloud
     # server 1 is entry server, for example.
-    Edge_Cloud.server_count = len(config["server_host_public"][:1])
-    Edge_Cloud.server_host = Edge_Cloud.server_host + config["server_host_public"][:1]
-    Edge_Cloud.server_port = Edge_Cloud.server_port + config["server_port"][:1]
+    Edge_Cloud.server_count = len(config["server_host_public"])
+    Edge_Cloud.server_host = Edge_Cloud.server_host + config["server_host_public"]
+    Edge_Cloud.server_port = Edge_Cloud.server_port + config["server_port"]
+    Edge_Cloud.args = args
+    for i in range(Edge_Cloud.server_count):
+        Edge_Cloud.data_que[i+1] = queue.Queue()
+        Edge_Cloud.que_lock[i+1] = threading.Lock()
     Edge_Cloud.start()
     trr = threading.Thread(target=Edge_Cloud.send_data())    # a thread which can be run forever
     trr.setDaemon(True)
